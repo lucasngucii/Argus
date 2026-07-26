@@ -255,7 +255,7 @@ Only possible because Argus keeps history + full policy snapshots:
 
 ## 8. Known limitations (documented honestly)
 
-- **Inline visibility only.** The hook sees the command on the Bash line. `psql` opened interactively then `DROP` typed inside, or `bash opaque-script.sh`, are not inspectable → Argus **escalates opaque scripts/subshells to `ask`** rather than guessing safe.
+- **Inline visibility only.** The hook sees the command on the Bash line. `psql` opened interactively then `DROP` typed inside, or `bash opaque-script.sh`, are not inspectable → Argus **escalates opaque scripts/subshells to `ask` (`medium`)** rather than guessing safe. Escalation severity depends on visibility: when a dangerous verb is *visible* in the command string even if wrapped/encoded (e.g. `eval "rm -rf /"`, `sudo rm -rf /`), Argus classifies `high`; only when the danger is genuinely *opaque* (no dangerous token visible — a bare `psql`, an unknown `bash script.sh`) does it fall to `ask`.
 - **Not a sandbox.** Argus is a *classification layer* complementing Claude Code’s permissions and OS sandbox, not a replacement. A determined adversary with full shell access has other avenues; Argus raises the bar and creates an audit trail, it is not an airtight jail.
 - **Policy completeness is ongoing.** No off-the-shelf dangerous-command taxonomy exists (research-confirmed); the ruleset is authored in-house, seeded from the current `agent-review` rules and possibly the arXiv 2412.01655 taxonomy, and hardened via shadow mode + the evasion corpus + community packs over time.
 
@@ -263,14 +263,10 @@ Only possible because Argus keeps history + full policy snapshots:
 
 ## 9. Scope
 
-**v1**
-- Go engine: `mvdan/sh` AST classification, severity model, fail-closed, self-protection, always-high floor.
-- `policy.json` + JSON Schema + version snapshots.
-- SQLite store (WAL, busy_timeout, BEGIN IMMEDIATE).
-- CLI: `gate`, `init`, `doctor`, `stats`, `test`, `explain`, `serve`, `replay`.
-- Web: live tail, stats, policy editor, **replay simulator**, explain.
-- Distribution: npm (optionalDeps + fallback) + GitHub Releases.
-- Migration from `agent-review` (§10).
+**v1** (delivered across Plans 1–2)
+- **Plan 1 — engine + gate CLI:** `mvdan/sh` AST classification, severity model, fail-closed, self-protection, always-high floor, allowlist/downgrade engine mechanism (capped by floor); `policy.json` + JSON Schema + version snapshots; SQLite store (WAL, busy_timeout, `_txlock=immediate`); CLI `gate`, `init`, `doctor`, `stats`, `test`, `explain`; migration from `agent-review` (§10).
+- **Plan 2 — web control-plane:** `serve`, `replay` (CLI + simulator UI), live tail, stats, policy editor, explain view. `replay` and the close-the-loop allowlist **UI** ship here; the engine-level downgrade mechanism and `policy_versions` write path land in Plan 1 so the data model is correct from the start.
+- **Plan 3 — distribution:** npm (optionalDeps + fallback) + GitHub Releases.
 
 **Roadmap** (explicitly out of v1)
 - Gate **MCP tool calls** (`mcp__*`) — new attack surface.
