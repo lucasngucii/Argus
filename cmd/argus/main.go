@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/lucasngucii/argus/internal/cli"
 	"github.com/lucasngucii/argus/internal/version"
 )
 
@@ -14,7 +15,10 @@ func main() {
 		os.Exit(2)
 	}
 	switch os.Args[1] {
-	// gate|init|doctor|test|explain|stats wired in later tasks
+	case "gate":
+		home, _ := os.UserHomeDir()
+		os.Exit(cli.Gate(os.Stdin, os.Stdout, home))
+	// init|doctor|test|explain|stats wired in later tasks
 	case "version", "--version", "-v":
 		fmt.Println("argus", version.String())
 	default:
