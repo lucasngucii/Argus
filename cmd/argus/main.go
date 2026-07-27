@@ -2,11 +2,14 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/lucasngucii/argus/internal/cli"
 	"github.com/lucasngucii/argus/internal/policy"
+	"github.com/lucasngucii/argus/internal/store"
 	"github.com/lucasngucii/argus/internal/version"
 )
 
@@ -68,7 +71,21 @@ func main() {
 			pol = policy.Default()
 		}
 		os.Exit(cli.Explain(command, "Bash", cwd, "default", pol, os.Stdout))
-	// stats wired in a later task
+	case "stats":
+		fs := flag.NewFlagSet("stats", flag.ExitOnError)
+		jsonl := fs.Bool("jsonl", false, "stream every decision as one JSON object per line")
+		fs.Parse(os.Args[2:])
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "argus: user home dir: %v\n", err)
+			os.Exit(1)
+		}
+		st, err := store.Open(filepath.Join(home, ".argus", "argus.db"))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "argus: stats: open store: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(cli.Stats(st, os.Stdout, *jsonl))
 	case "version", "--version", "-v":
 		fmt.Println("argus", version.String())
 	default:
