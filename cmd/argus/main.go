@@ -47,7 +47,28 @@ func main() {
 			os.Exit(2)
 		}
 		os.Exit(cli.RunHarness(paths, policy.Default(), os.Stdout))
-	// explain|stats wired in later tasks
+	case "explain":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: argus explain <command>")
+			os.Exit(2)
+		}
+		command := os.Args[2]
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "argus: cwd: %v\n", err)
+			os.Exit(1)
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "argus: user home dir: %v\n", err)
+			os.Exit(1)
+		}
+		pol, err := policy.Load(home + "/.argus/policy.json")
+		if err != nil {
+			pol = policy.Default()
+		}
+		os.Exit(cli.Explain(command, "Bash", cwd, "default", pol, os.Stdout))
+	// stats wired in a later task
 	case "version", "--version", "-v":
 		fmt.Println("argus", version.String())
 	default:
