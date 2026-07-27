@@ -48,6 +48,19 @@ func Default() Policy {
 // home-independent: callers never need a policy file to get the floor.
 func Floor() []Rule {
 	f := []Rule{
+		// Recursive rm of a catastrophic target (root, home, a system dir,
+		// `..` traversal, or a target the AST couldn't resolve). This lives in
+		// the floor — not just Default()'s rm-recursive — so the catch survives
+		// an empty or hand-edited user policy (spec §1.1/§1.4: the floor is an
+		// engine invariant, not contingent on a well-formed policy file).
+		// Deliberately NOT AlwaysHigh and base Severity "low": that keeps an
+		// ordinary `rm -r <path>` at its scorer verdict (low/medium, still
+		// downgradable). Only a scorer-"high" target pins the floor, via
+		// classify.Classify. Flags{"r"} mirrors rm-recursive, so this rule
+		// changes no severity Default() didn't already produce (max wins).
+		{ID: "rm-catastrophic", Enabled: true, Severity: "low", Tool: []string{"Bash"},
+			Match:  Match{Cmd: []string{"rm"}, Flags: []string{"r"}, TargetScorer: "rm_target"},
+			Reason: "recursive rm of a catastrophic target"},
 		{ID: "disk-format", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
 			Match: Match{Cmd: []string{"dd", "mkfs", "fdisk", "diskutil"}, ArgMatches: `if=|erase`}, Reason: "disk/format"},
 		{ID: "forkbomb", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},

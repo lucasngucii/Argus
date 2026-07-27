@@ -69,3 +69,50 @@ func TestAllowlistDowngradesMedium(t *testing.T) {
 		t.Fatal("allowlist must downgrade medium→safe")
 	}
 }
+
+// minimalPol is a valid but rule-less policy — NOT Default(). It is the crux
+// of the FINAL-REVIEW Critical: catastrophic recursive-rm must still floor to
+// high with no rules present, because the floor is an engine invariant that
+// does not depend on the policy file being well-formed (spec §1.1/§1.4,
+// CLAUDE.md §4). Rules is nil on purpose.
+var minimalPol = policy.Policy{Version: 1}
+
+func sevMinimal(cmd, cwd string) string {
+	return Classify(bash(cmd, "default", cwd), minimalPol).Severity
+}
+
+// TestFloorRmCatastrophicUnderEmptyPolicy is the direct reproduction: under a
+// rule-less policy, recursive-rm of root, of home (`~`), and a wrapper-hidden
+// one (`sudo`) must all classify high via the floor's rm-catastrophic rule +
+// scorer-high pinning — even though no user/default rule fires.
+func TestFloorRmCatastrophicUnderEmptyPolicy(t *testing.T) {
+	cases := []string{"rm -rf /", "rm -rf ~", "sudo rm -rf /"}
+	for _, c := range cases {
+		if got := sevMinimal(c, "/tmp"); got != "high" {
+			t.Fatalf("empty-policy catastrophic rm not floored (%q → %s, want high)", c, got)
+		}
+	}
+}
+
+// TestFloorRmOrdinaryUnderEmptyPolicyIsMedium proves the floor rule does not
+// over-pin: an ordinary recursive-rm of a normal project subdir scores medium
+// (the scorer verdict), never high, and stays downgradable.
+func TestFloorRmOrdinaryUnderEmptyPolicyIsMedium(t *testing.T) {
+	if got := sevMinimal("rm -rf src", "/home/dev/project"); got != "medium" {
+		t.Fatalf("ordinary recursive rm over-pinned (got %s, want medium)", got)
+	}
+}
+
+// TestAllowlistCannotDowngradeCatastrophicRm asserts an Allow rule matching
+// `rm` cannot lower a scorer-high catastrophic target (floorHit blocks the
+// allowlist), yet still downgrades an ordinary recursive-rm to safe.
+func TestAllowlistCannotDowngradeCatastrophicRm(t *testing.T) {
+	pol := minimalPol
+	pol.Rules = []policy.Rule{{ID: "allow-rm", Enabled: true, Allow: true, Tool: []string{"Bash"}, Match: policy.Match{Cmd: []string{"rm"}}}}
+	if got := Classify(bash("rm -rf /", "default", "/tmp"), pol).Severity; got != "high" {
+		t.Fatalf("allowlist downgraded catastrophic rm (got %s, want high)", got)
+	}
+	if got := Classify(bash("rm -rf src", "default", "/home/dev/project"), pol).Severity; got != "safe" {
+		t.Fatalf("allowlist must still downgrade ordinary rm (got %s, want safe)", got)
+	}
+}

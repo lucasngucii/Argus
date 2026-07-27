@@ -2,13 +2,20 @@ package policy
 
 import "testing"
 
-func TestFloorAllHigh(t *testing.T) {
+// TestFloorRulesPinHigh asserts every floor rule can pin the high floor, by
+// one of the two sanctioned mechanisms: an AlwaysHigh+high rule (pins
+// unconditionally), or a scorer-gated rule whose TargetScorer floors the
+// verdict only when it returns "high" (see classify.Classify). rm-catastrophic
+// is deliberately the latter so an ordinary `rm -r <path>` is not over-pinned.
+func TestFloorRulesPinHigh(t *testing.T) {
 	if len(Floor()) == 0 {
 		t.Fatal("empty floor")
 	}
 	for _, r := range Floor() {
-		if !r.AlwaysHigh || r.Severity != "high" {
-			t.Fatalf("floor not always-high: %+v", r)
+		alwaysHigh := r.AlwaysHigh && r.Severity == "high"
+		scorerGated := r.Match.TargetScorer != ""
+		if !alwaysHigh && !scorerGated {
+			t.Fatalf("floor rule can neither always-high nor scorer-gate: %+v", r)
 		}
 	}
 }

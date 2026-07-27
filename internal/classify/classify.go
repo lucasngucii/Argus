@@ -92,6 +92,15 @@ func Classify(p hook.Payload, pol policy.Policy) Decision {
 			if r.Match.TargetScorer != "" {
 				if sc, has := Scorers[r.Match.TargetScorer]; has {
 					s = sc(f)
+					// A scorer verdict of "high" marks a catastrophic target
+					// (root, home, a system dir, `..` traversal, or one the AST
+					// couldn't resolve). That is an engine-level floor no
+					// allowlist may downgrade — exactly like AlwaysHigh (CLAUDE.md
+					// §4) — so pin floorHit. A medium/low target does NOT, so an
+					// ordinary `rm -r <path>` stays downgradable.
+					if s == "high" {
+						floorHit = true
+					}
 				}
 			}
 			s = applyContext(s, r, p.CWD)
