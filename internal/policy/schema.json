@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://argus.dev/schema/policy.json",
+  "type": "object",
+  "required": ["version", "rules"],
+  "properties": {
+    "version": { "type": "integer" },
+    "meta": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "defaults": {
+      "type": "object",
+      "properties": {
+        "shadow": { "type": "boolean" }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "required": ["id", "tool", "reason"],
+      "properties": {
+        "id": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "alwaysHigh": { "type": "boolean" },
+        "allow": { "type": "boolean" },
+        "tool": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "match": { "$ref": "#/$defs/match" },
+        "severity": {
+          "type": "string",
+          "enum": ["safe", "low", "medium", "high"]
+        },
+        "reason": { "type": "string" },
+        "contextEscalation": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/escalation" }
+        }
+      }
+    },
+    "match": {
+      "type": "object",
+      "properties": {
+        "cmd": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "flags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "argMatches": { "type": "string" },
+        "argsContain": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "pipesInto": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "redirectsTo": { "type": "string" },
+        "targetScorer": { "type": "string" },
+        "raw": { "type": "string" }
+      }
+    },
+    "condition": {
+      "type": "object",
+      "properties": {
+        "cwdMatches": { "type": "string" }
+      }
+    },
+    "escalation": {
+      "type": "object",
+      "required": ["when", "to"],
+      "properties": {
+        "when": { "$ref": "#/$defs/condition" },
+        "to": { "type": "string" }
+      }
+    }
+  }
+}

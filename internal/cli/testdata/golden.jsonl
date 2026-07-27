@@ -1,0 +1,8 @@
+{"tool":"Bash","command":"git push origin main","expect":"safe"}
+{"tool":"Bash","command":"git reset HEAD file","expect":"safe"}
+{"tool":"Bash","command":"ls -la","expect":"safe"}
+{"tool":"Bash","command":"rm -rf ./build","expect":"low"}
+{"tool":"Bash","command":"sudo apt-get update","expect":"medium"}
+{"tool":"Bash","command":"bash /tmp/evil.sh","expect":"medium"}
+{"tool":"Bash","command":"sh -c \"echo hi\"","expect":"medium"}
+{"tool":"Bash","command":"bash --version","expect":"safe"}
