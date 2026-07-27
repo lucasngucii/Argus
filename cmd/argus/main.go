@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/lucasngucii/argus/internal/cli"
+	"github.com/lucasngucii/argus/internal/policy"
 	"github.com/lucasngucii/argus/internal/version"
 )
 
@@ -39,7 +40,14 @@ func main() {
 			os.Exit(1)
 		}
 		os.Exit(cli.Doctor(home, os.Stdout))
-	// test|explain|stats wired in later tasks
+	case "test":
+		paths := os.Args[2:]
+		if len(paths) == 0 {
+			fmt.Fprintln(os.Stderr, "usage: argus test <corpus.jsonl> [corpus.jsonl ...]")
+			os.Exit(2)
+		}
+		os.Exit(cli.RunHarness(paths, policy.Default(), os.Stdout))
+	// explain|stats wired in later tasks
 	case "version", "--version", "-v":
 		fmt.Println("argus", version.String())
 	default:

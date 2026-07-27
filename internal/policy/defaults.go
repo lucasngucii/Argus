@@ -34,7 +34,11 @@ func Default() Policy {
 			Match: Match{Cmd: []string{"psql", "mongosh", "mongo", "clickhouse-client"},
 				ArgMatches: `(?i)\b(insert\s+into|update\s|create\s+(table|database)|alter\s|grant\s)\b`}},
 		{ID: "opaque-exec", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "opaque script/subshell — cannot inspect",
-			Match: Match{ArgMatches: `(?i)\b(bash|sh|zsh)\s+[^-|;&]+\.sh\b|-c\s`}},
+			// Raw (full command), not ArgMatches (joined args): the interpreter
+			// name (`bash`, `sh`) is the command word, never an arg, so the
+			// `(bash|sh|zsh)\s+…\.sh` alternative could never fire against args
+			// alone. The lead `[^-|;&]` guard keeps `bash --version` benign.
+			Match: Match{Raw: `(?i)\b(bash|sh|zsh)\s+[^-|;&]+\.sh\b|-c\s`}},
 	}
 	return p
 }

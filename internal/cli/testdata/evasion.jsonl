@@ -1,0 +1,7 @@
+{"tool":"Bash","command":"sudo rm -rf /","expect":"high"}
+{"tool":"Bash","command":"env X=1 rm -rf /","expect":"high"}
+{"tool":"Bash","command":"X=rm; $X -rf /","expect":"high"}
+{"tool":"Bash","command":"rm$IFS-rf$IFS/","expect":"high"}
+{"tool":"Bash","command":"echo cm0K | base64 -d | sh","expect":"high"}
+{"tool":"Bash","command":"eval \"rm -rf /\"","expect":"high"}
+{"tool":"Bash","command":"rm -rf $TARGET","expect":"high"}
