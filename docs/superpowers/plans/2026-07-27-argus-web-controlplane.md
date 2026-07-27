@@ -1,316 +1,330 @@
 # Argus Web Control-Plane — Implementation Plan (Plan 2 of 4)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax. REQUIRED before each task: read `CLAUDE.md` and invoke the **argus-architect** skill. The frontend task additionally requires the **dataviz** skill before writing any chart code.
+> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax. REQUIRED before each task: read `CLAUDE.md` + invoke **argus-architect**. Frontend tasks additionally require the **dataviz** skill before chart code.
+>
+> **Rev 2** — hardened after two independent adversarial reviews (security + coverage). Changelog at end. The three security BLOCKINGs (public bind, version/audit divergence, DNS-rebinding) and the dropped close-the-loop UI are all fixed here.
 
-**Goal:** Add the local observability + governance UI on top of the Plan-1 engine: an `argus serve` localhost web app (live decision tail, stats, policy editor, explain, and the **replay simulator**) plus an `argus replay` CLI — the features a stateless deny-list structurally cannot offer.
+**Goal:** Add the local observability + governance UI on the Plan-1 engine: `argus serve` (localhost web app — live tail, stats, explain, policy editor, **replay simulator**, and **close-the-loop allow/downgrade from a decision row**) + `argus replay` CLI.
 
-**Architecture:** A `net/http` server (localhost-only) serving a JSON+SSE API and a **no-build** static frontend embedded via `//go:embed`. The moat is a pure **replay engine** that re-scores stored decisions against a candidate policy and diffs the outcome. The security verdict path (Plan 1) is untouched; this plane only reads the DB and, for the policy editor, validates-then-writes `policy.json` + a version snapshot.
+**Architecture:** `net/http` server bound to loopback only, serving a JSON+SSE API and a **no-build** static frontend embedded via `//go:embed`. The moat is a pure **replay engine** that re-scores stored decisions against a candidate policy. The Plan-1 verdict path is untouched; this plane reads the DB and, for the editor/close-the-loop, validates-then-writes `policy.json` + a version snapshot. The server is authenticated only by being loopback-bound, so it defends the two browser-reachable attack vectors explicitly: **Host-header allowlist** (defeats DNS-rebinding) and **CSRF protection on mutating routes**.
 
-**Tech Stack:** Go 1.26 · stdlib `net/http`, `html/template`, `embed`, `encoding/json` · reuse `internal/{store,policy,classify,verdict,hook,shellast}` · **frontend: hand-written HTML/CSS/vanilla JS with inline SVG charts — NO npm/node/vite/framework** (keeps the whole project pure-Go-buildable, `CGO_ENABLED=0`, one `go build`).
+**Tech Stack:** Go 1.26 · stdlib `net/http`, `embed`, `encoding/json`, `net` · reuse `internal/{store,policy,classify,verdict,hook,shellast}` · **frontend: no npm/node/vite/framework** — hand-written HTML/CSS + per-tab ES modules, optionally a single vendored ~4 KB Preact+htm ESM file (embedded, no build). Inline SVG charts per dataviz.
 
 ## Global Constraints
 
-- Module `github.com/lucasngucii/argus`. Go **1.26**. **`CGO_ENABLED=0`** — no cgo, and **no JS build toolchain** (no `package.json`, no `node_modules`); the frontend is static files embedded with `//go:embed`.
-- **Bind localhost only** (`127.0.0.1`), default port `4600`, overridable via `--addr`. No auth (single-user local), no CORS headers, no `0.0.0.0`. The server must never expand the gate's attack surface.
-- **Read-mostly.** The only mutating endpoint is `PUT /api/policy`, which MUST `policy.Load`-validate the body against the schema BEFORE writing `policy.json`, then record a `policy_versions` snapshot. A rejected/invalid policy leaves the on-disk policy unchanged.
-- **The engine is authoritative and reused, never reimplemented.** Stats/explain/replay all call `classify.Classify` / `verdict.Map` / `policy.Load` — no parallel classification logic in the web layer.
-- **Replay is pure and read-only:** it never writes decisions and never mutates `policy.json`; it reconstructs a `hook.Payload` from a stored `store.Row` and classifies it against a candidate policy in memory.
-- **`store` must gain `Close()`** (parked from Plan 1 Task 11 — a long-running `serve` that never closes leaks the `*sql.DB` pool + its goroutine).
-- Commit identity author & committer `lucasngucii <lucasalehwork@gmail.com>`; **never** a `Co-Authored-By: Claude` trailer.
-- Paths: DB `~/.argus/argus.db`, policy `~/.argus/policy.json` (same as Plan 1).
+- Module `github.com/lucasngucii/argus`. Go **1.26**. **`CGO_ENABLED=0`**, and **no JS build toolchain** (no `package.json`/`node_modules`) — frontend is static files embedded with `//go:embed`, one `go build` builds everything.
+- **Loopback-only, enforced for real.** Default `--addr 127.0.0.1:4600`. Reject any bind whose host is empty, `0.0.0.0`, `::`, or any non-loopback address; a port-only addr (`:4600`) is rewritten to `127.0.0.1:4600`, never left as the wildcard. Only `127.0.0.1` / `::1` / `localhost` hosts are allowed.
+- **Browser-attack defense (both required):** (1) a **Host-header allowlist** middleware on ALL routes — reject unless `Host` is `127.0.0.1:<port>` / `localhost:<port>` / `[::1]:<port>` (defeats DNS-rebinding, which keeps the attacker's Host). (2) **CSRF** on mutating routes (`PUT/POST`): require header `X-Argus-CSRF: 1` (a custom header browsers can't set cross-origin without a preflight) AND `Content-Type: application/json`; reject otherwise.
+- **Policy version = the document's own `version` field, single source of truth.** Plan-1 writes `decisions.policy_version = pol.Version` and `init` stamps `InsertPolicyVersion(1, …)` to match `Default().Version==1`. Any policy write here MUST set the document's `version = maxExistingVersion+1`, write that into `policy.json`, and record `InsertPolicyVersion(thatSameVersion, …)` — so a decision's `policy_version` always resolves to a snapshot and `replay --version N` lines up. Never key snapshots off an independent counter.
+- **Read-mostly; validate-before-write.** Mutating endpoints (`PUT /api/policy`, `POST /api/allowlist`) MUST `policy.Validate` the resulting policy against the schema BEFORE touching `policy.json`; on invalid, return 400 and leave the file unchanged.
+- **Engine is authoritative & reused, never reimplemented.** Stats/explain/replay/close-the-loop call `classify.Classify` / `verdict.Map` / `policy.*`. No parallel classification.
+- **Replay is pure & read-only**; reconstructs `hook.Payload` from a `store.Row`; never writes decisions or `policy.json`.
+- **`store` gains `Close()`** (parked Plan-1 finding) and `serve` calls it on shutdown; shutdown is bounded and must not hang on an open SSE connection.
+- All request bodies wrapped in `http.MaxBytesReader` (1 MB).
+- Commit identity `lucasngucii <lucasalehwork@gmail.com>`; **never** a `Co-Authored-By: Claude` trailer.
+
+## Consumes from Plan 1 (exact signatures — do not guess)
+
+```go
+// internal/hook
+type ToolInput struct{ Command, FilePath string } // json: command, file_path
+type Payload struct{ SessionID, TranscriptPath, CWD, PermissionMode, HookEventName, ToolName, ToolUseID string; ToolInput ToolInput }
+func (p Payload) Subject() string // Command if ToolName=="Bash" else FilePath
+
+// internal/classify
+type Decision struct{ Severity, RuleID, Reason string; Obfuscated bool } // NOTE: singular Reason + Obfuscated (bool) — use these names, not "reasons"/"obfuscation"
+func Classify(p hook.Payload, pol policy.Policy) Decision
+
+// internal/verdict
+func Map(severity, permissionMode string) string // allow|ask|deny
+
+// internal/policy
+type Policy struct{ Version int; Meta map[string]string; Defaults Defaults; Rules []Rule }
+type Rule struct{ ID string; Enabled, AlwaysHigh, Allow bool; Tool []string; Match Match; Severity, Reason string; ContextEscalation []Escalation }
+func Load(path string) (Policy, error) // reads+schema-validates+unmarshals
+func Default() Policy
+
+// internal/store (Plan-1 surface; Task 1 EXTENDS it)
+type Row struct{ TS, Session, CWD, Tool, Command, File, Severity, Verdict, PermissionMode, RuleID, Harness string; PolicyVersion int; Obfuscation bool }
+func Open(path string) (*Store, error)
+func (s *Store) Insert(r Row) error
+func (s *Store) Recent(limit int) ([]Row, error)          // newest-first
+func (s *Store) Counts() (map[string]int, error)          // full-history GROUP BY severity
+func (s *Store) InsertPolicyVersion(version int, author, note, policyJSON, hash string) error
+func (s *Store) PolicyVersionCount() (int, error)
+```
+Legacy note: `init` imports old `agent-review` rows with `Harness:"agent-review"`, `RuleID:"legacy-import"`, scored by the OLD engine — replay must exclude these (see Task 3).
 
 ## File Structure
 
 ```
-argus/
-  internal/store/store.go            # +Close(), +Row.ID, +DecisionsAfter, +Page, +PolicyVersions/+PolicyVersionJSON, +AllDecisions
-  internal/replay/replay.go          # pure re-score + diff engine
-  internal/web/server.go             # http.Server, routing, localhost bind, graceful shutdown
-  internal/web/handlers.go           # /api/* handlers
-  internal/web/sse.go                # SSE live-tail hub
-  internal/web/static/index.html     # embedded SPA shell (no build)
-  internal/web/static/app.js         # vanilla JS: tabs, fetch, EventSource, replay, editor
-  internal/web/static/style.css      # theme-aware (light/dark) styles
-  internal/web/embed.go              # //go:embed static/*
-  internal/cli/serve.go              # `argus serve`
-  internal/cli/replay.go             # `argus replay`
-  internal/cli/doctor.go             # MODIFY: warn when loaded policy misses seed rule IDs
-  cmd/argus/main.go                  # wire `serve`, `replay`
+internal/store/store.go            # +Close, +Row.ID(+json tags), +DecisionsAfter, +Page, +MaxID,
+                                    #   +DistinctSessions(WHERE session!=''), +VerdictCount,
+                                    #   +PolicyVersions/+PolicyVersionJSON, +AllDecisions(cap, claudeCodeOnly)
+internal/policy/validate.go        # +Validate([]byte) error, +SeedRuleIDs() []string
+internal/replay/replay.go          # pure Rescore + diff, MaxReplay const
+internal/web/server.go             # http.Server, loopback-bind validation, graceful shutdown
+internal/web/middleware.go         # Host-allowlist + CSRF + MaxBytesReader
+internal/web/handlers.go           # /api/* handlers; per-request policy load
+internal/web/sse.go                # per-connection SSE poll loop (no hub)
+internal/web/static/index.html     # embedded shell (no build)
+internal/web/static/*.js           # per-tab ES modules (+ optional vendored preact-htm.mjs)
+internal/web/static/style.css      # theme-aware
+internal/web/embed.go              # //go:embed static/*
+internal/cli/{serve,replay}.go
+internal/cli/doctor.go             # MODIFY: seed-rule WARN
+cmd/argus/main.go                  # wire serve, replay
 ```
 
 ---
 
 ### Task 1: Store read-surface + `Close()` + `Row.ID`
 
-**Files:** Modify `internal/store/store.go`, `internal/store/store_test.go`
-**Interfaces — Produces:**
-- `func (s *Store) Close() error` — closes the underlying `*sql.DB`.
-- `Row` gains `ID int` (first field). `Recent` selects/scans `id`.
-- `func (s *Store) DecisionsAfter(afterID, limit int) ([]Row, error)` — rows with `id > afterID`, oldest-first, up to limit (SSE cursor).
-- `func (s *Store) Page(severity string, limit, beforeID int) ([]Row, error)` — filtered page, newest-first; empty `severity` = all; `beforeID<=0` = from newest.
-- `func (s *Store) DistinctSessions() (int, error)`.
-- `type VersionMeta struct { Version int; TS, Author, Note, Hash string }`; `func (s *Store) PolicyVersions() ([]VersionMeta, error)` (newest-first) and `func (s *Store) PolicyVersionJSON(version int) (string, error)`.
-- `func (s *Store) AllDecisions(cap int) (rows []Row, capped bool, err error)` — full history oldest-first up to `cap`; `capped=true` when truncated (no silent cap — replay logs it).
+**Files:** Modify `internal/store/store.go`, `store_test.go`
+**Produces:**
+- `func (s *Store) Close() error`.
+- `Row` gains `ID int` as first field, and **all `Row` fields get json tags** (`id,ts,session,cwd,tool,command,file,severity,verdict,permission_mode,rule_id,harness,policy_version,obfuscation`) so API/JSONL output has stable snake_case keys. `Recent` selects/scans `id`.
+- `func (s *Store) MaxID() (int, error)` — `SELECT COALESCE(MAX(id),0)`.
+- `func (s *Store) DecisionsAfter(afterID, limit int) ([]Row, error)` — `id>afterID`, oldest-first.
+- `func (s *Store) Page(severity string, limit, beforeID int) ([]Row, error)` — newest-first; empty severity = all; `beforeID<=0` = newest.
+- `func (s *Store) DistinctSessions() (int, error)` — `COUNT(DISTINCT session) WHERE session != ''` (match `stats.go`'s CLI behavior — do NOT count the empty session).
+- `func (s *Store) VerdictCount(verdict string) (int, error)` — full-history count.
+- `type VersionMeta struct{ Version int; TS, Author, Note, Hash string }`; `PolicyVersions() ([]VersionMeta, error)` (newest-first); `PolicyVersionJSON(version int) (string, error)`.
+- `func (s *Store) AllDecisions(cap int, claudeCodeOnly bool) (rows []Row, capped bool, err error)` — oldest-first up to `cap`; when `claudeCodeOnly`, `WHERE harness='claude-code'` (excludes legacy-import rows); `capped=true` when truncated.
 
-- [ ] **Step 1: Write failing tests** (add to store_test.go)
-```go
-func TestCloseIsIdempotentSafe(t *testing.T) {
-	s, _ := Open(filepath.Join(t.TempDir(), "a.db"))
-	if err := s.Close(); err != nil { t.Fatalf("close: %v", err) }
-}
-func TestDecisionsAfterCursor(t *testing.T) {
-	s, _ := Open(filepath.Join(t.TempDir(), "a.db"))
-	for i := 0; i < 3; i++ { _ = s.Insert(Row{TS: "t", Severity: "low"}) }
-	first, _ := s.DecisionsAfter(0, 10)
-	if len(first) != 3 || first[0].ID == 0 { t.Fatalf("want 3 rows with ids, got %+v", first) }
-	tail, _ := s.DecisionsAfter(first[1].ID, 10)
-	if len(tail) != 1 || tail[0].ID != first[2].ID { t.Fatalf("cursor wrong: %+v", tail) }
-}
-func TestPageFilterBySeverity(t *testing.T) {
-	s, _ := Open(filepath.Join(t.TempDir(), "a.db"))
-	_ = s.Insert(Row{TS: "t", Severity: "high"}); _ = s.Insert(Row{TS: "t", Severity: "low"})
-	hi, _ := s.Page("high", 10, 0)
-	if len(hi) != 1 || hi[0].Severity != "high" { t.Fatalf("filter: %+v", hi) }
-}
-func TestPolicyVersionsRoundTrip(t *testing.T) {
-	s, _ := Open(filepath.Join(t.TempDir(), "a.db"))
-	_ = s.InsertPolicyVersion(1, "init", "seed", `{"version":1}`, "abc")
-	vs, _ := s.PolicyVersions()
-	if len(vs) != 1 || vs[0].Version != 1 || vs[0].Author != "init" { t.Fatalf("versions: %+v", vs) }
-	js, _ := s.PolicyVersionJSON(1)
-	if js != `{"version":1}` { t.Fatalf("json: %q", js) }
-}
-func TestAllDecisionsCapFlag(t *testing.T) {
-	s, _ := Open(filepath.Join(t.TempDir(), "a.db"))
-	for i := 0; i < 5; i++ { _ = s.Insert(Row{TS: "t", Severity: "low"}) }
-	rows, capped, _ := s.AllDecisions(3)
-	if len(rows) != 3 || !capped { t.Fatalf("want capped 3, got %d capped=%v", len(rows), capped) }
-}
-```
+- [ ] **Step 1: Failing tests** — cover `Close`, cursor (`DecisionsAfter` returns rows with real ids; a mid cursor returns the tail), `Page("high",…)` filter, `DistinctSessions` ignores `''` (insert one row with `Session:""` and one with `Session:"s1"` → count 1), `VerdictCount("deny")`, `PolicyVersions`/`PolicyVersionJSON` round-trip, `AllDecisions(3,false)` capped, and `AllDecisions(100,true)` excludes a `Harness:"agent-review"` row.
 - [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement.** Add `ID` as the first `Row` field; update the `Recent` SELECT to `SELECT id, ts, …` and its `Scan` to `&r.ID, &r.TS, …`. **Cross-task ripple to fix in the same step:** `store_test.go`'s existing `TestRecentRoundTrip` compares whole `Row` structs — after adding `ID`, the returned rows carry real ids while the `want` literals have `ID:0`; update that test to zero out `got[i].ID` before the struct compare (or assert ids separately). `Insert` is unchanged (`id` is autoincrement). New methods are plain queries.
-- [ ] **Step 4: Run → PASS** (`go test ./internal/store/...` and full `go test ./...` — confirm gate/stats still green, since `Row` now has `ID`).
-- [ ] **Step 5: Commit** `feat(store): add Close, Row.ID, cursor/page/version/all read methods`.
+- [ ] **Step 3: Implement.** Add `ID` + json tags; update `Recent`'s SELECT/Scan to include `id`. **Cross-task ripples to fix in THIS step:** (a) `store_test.go` `TestRecentRoundTrip` compares whole `Row` structs at THREE sites (`got[0]`, `got[1]`, and the `all[i]` loop) — zero `ID` on each before comparing, or assert ids separately. (b) `internal/cli/stats.go` `--jsonl` marshals `Row`; with json tags it now emits `"id"` and snake_case keys — update `TestStats_JSONL` if it asserts Go-cased field names (it asserts `Severity`/`TS` — switch to `severity`/`ts`). Run full `go test ./...` to catch any other consumer.
+- [ ] **Step 4: Run → PASS** (full suite green).
+- [ ] **Step 5: Commit** `feat(store): Close, Row.ID+json tags, cursor/page/version/verdict/all read methods`.
 
 ---
 
-### Task 2: Replay engine (the moat) — pure re-score + diff
+### Task 2: `policy.Validate` + `policy.SeedRuleIDs`
 
-**Files:** Create `internal/replay/replay.go`, `internal/replay/replay_test.go`
-**Interfaces — Produces:**
-- `type Change struct { Row store.Row; OldSeverity, NewSeverity, OldVerdict, NewVerdict string }`
-- `type Result struct { Total int; Changed []Change; Summary map[string]int; Capped bool }` — `Summary` keys like `"ask->allow"`, `"allow->deny"`, counts of transitions among changed rows.
-- `func Rescore(rows []store.Row, capped bool, candidate policy.Policy) Result` — pure; for each row, rebuild a `hook.Payload{ToolName:r.Tool, PermissionMode:r.PermissionMode, CWD:r.CWD, ToolInput:{Command:r.Command, FilePath:r.File}}`, run `classify.Classify(payload, candidate)` → new severity, `verdict.Map(newSeverity, r.PermissionMode)` → new verdict; compare to the row's stored `Severity`/`Verdict`; collect only rows whose severity OR verdict changed.
+**Files:** Create `internal/policy/validate.go`, `internal/policy/validate_test.go`
+**Produces:**
+- `func Validate(b []byte) error` — schema-validate raw policy JSON (refactor the existing schema-validate path out of `Load` so both `Load(path)` and `Validate(bytes)` share it; `Load` becomes read-file → `Validate` → unmarshal). Returns the schema error on invalid.
+- `func SeedRuleIDs() []string` — the baseline rule IDs from `Default()` (`rm-recursive, git-danger, sudo, docker-service, db-write, opaque-exec`), derived from `Default().Rules` (not hard-coded) so it can't drift.
 
-- [ ] **Step 1: Write failing tests**
+- [ ] **Step 1: Failing tests** — `Validate([]byte(`{"version":"x"}`))` errors; `Validate` of `Default()` marshaled is nil; `SeedRuleIDs()` contains `sudo` and equals the non-alwaysHigh rule IDs of `Default()`.
+- [ ] **Step 2: Run → FAIL.**
+- [ ] **Step 3: Implement**; ensure `Load` still passes its Plan-1 tests after the refactor (run `go test ./internal/policy/...`).
+- [ ] **Step 4: Run → PASS.**
+- [ ] **Step 5: Commit** `feat(policy): Validate(bytes) + SeedRuleIDs helpers (shared schema-validate path)`.
+
+---
+
+### Task 3: Replay engine (the moat) — pure re-score + diff
+
+**Files:** Create `internal/replay/replay.go`, `replay_test.go`
+**Produces:**
+- `const MaxReplay = 50000`.
+- `type Change struct{ Row store.Row; OldSeverity, NewSeverity, OldVerdict, NewVerdict string }`
+- `type Result struct{ Total int; Changed []Change; Summary map[string]int; Capped bool }`
+- `func Rescore(rows []store.Row, capped bool, candidate policy.Policy) Result` — pure. For each row build `hook.Payload{ToolName:r.Tool, PermissionMode:r.PermissionMode, CWD:r.CWD, ToolInput:hook.ToolInput{Command:r.Command, FilePath:r.File}}`; `new := classify.Classify(payload, candidate)`; `nv := verdict.Map(new.Severity, r.PermissionMode)`; compare to stored `r.Severity`/`r.Verdict`; collect only changed rows; `Summary["<oldVerdict>-><newVerdict>"]++`.
+
+**Scope note (from review A4):** replay re-scores the **logged** history. Plan-1's gate does NOT persist `safe` decisions (noise reduction), so replay covers `low`/`medium`/`high` rows — it shows transitions like `low→medium` ("previously allowed, now flagged"), but cannot resurface a command that was `safe`+unlogged. Document this in the CLI/UI output. Test fixtures therefore use **reachable** rows (`low`/`medium`/`high`, never `safe`).
+
+- [ ] **Step 1: Failing tests** (use reachable fixtures):
 ```go
-func TestRescoreDetectsNewlyCaught(t *testing.T) {
-	rows := []store.Row{{Tool: "Bash", Command: "sudo rm -rf /", PermissionMode: "default", Severity: "safe", Verdict: "allow"}}
-	res := replay.Rescore(rows, false, policy.Default())
-	if len(res.Changed) != 1 || res.Changed[0].NewVerdict != "deny" { t.Fatalf("should newly catch: %+v", res.Changed) }
-	if res.Summary["allow->deny"] != 1 { t.Fatalf("summary: %+v", res.Summary) }
+// a low/allow row that a stricter candidate escalates to medium
+func TestRescoreEscalation(t *testing.T) {
+  rows := []store.Row{{Tool:"Bash", Command:"rm -rf ./buildcache", PermissionMode:"default", Severity:"low", Verdict:"allow"}}
+  // candidate: a policy whose rm rule scores this medium (or default() where cwd-context escalates) — pick one that changes it
+  res := replay.Rescore(rows, false, strictCandidate())
+  if len(res.Changed) != 1 || res.Changed[0].NewVerdict != "ask" { t.Fatalf("%+v", res.Changed) }
+  if res.Summary["allow->ask"] != 1 { t.Fatalf("summary %+v", res.Summary) }
 }
 func TestRescoreUnchangedNotReported(t *testing.T) {
-	rows := []store.Row{{Tool: "Bash", Command: "ls -la", PermissionMode: "default", Severity: "safe", Verdict: "allow"}}
-	if len(replay.Rescore(rows, false, policy.Default()).Changed) != 0 { t.Fatal("benign unchanged must not appear") }
+  rows := []store.Row{{Tool:"Bash", Command:"sudo apt-get update", PermissionMode:"default", Severity:"medium", Verdict:"ask"}}
+  if len(replay.Rescore(rows, false, policy.Default()).Changed) != 0 { t.Fatal("unchanged must not appear") }
 }
-func TestRescorePropagatesCapped(t *testing.T) {
-	if !replay.Rescore(nil, true, policy.Default()).Capped { t.Fatal("capped must propagate") }
-}
+func TestRescorePropagatesCapped(t *testing.T){ if !replay.Rescore(nil, true, policy.Default()).Capped { t.Fatal("capped") } }
 ```
-- [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement** `Rescore` as specified; `Total = len(rows)`; build `Summary` from `fmt.Sprintf("%s->%s", oldVerdict, newVerdict)` for each changed row.
-- [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** `feat(replay): pure re-score/diff engine (candidate policy vs stored decisions)`.
+(Provide `strictCandidate()` as a small policy in the test that deterministically changes the fixture — e.g. an `Allow`-less policy plus a rule that makes `rm -rf ./buildcache` medium, OR reuse `Default()` with the row's `CWD` set to a prod path so context-escalation fires. Choose whichever is deterministic against the real classifier.)
+- [ ] **Step 2: Run → FAIL.**  — [ ] **Step 3: Implement.**  — [ ] **Step 4: Run → PASS.**
+- [ ] **Step 5: Commit** `feat(replay): pure re-score/diff over logged (low+) history`.
 
 ---
 
-### Task 3: `argus replay` CLI
+### Task 4: `argus replay` CLI
 
-**Files:** Create `internal/cli/replay.go`, `internal/cli/replay_test.go`; Modify `cmd/argus/main.go`
-**Interfaces — Produces:** `func Replay(s *store.Store, candidate policy.Policy, w io.Writer) int` — read all decisions (`AllDecisions(50000)`), `replay.Rescore`, print the summary (`N decisions, M changed`, the transition table) and each changed row (`old→new`); if `capped`, print a `NOTE: only first 50000 decisions scored` line. Return 0.
+**Files:** Create `internal/cli/replay.go`, `replay_test.go`; Modify `cmd/argus/main.go`
+**Produces:** `func Replay(s *store.Store, candidate policy.Policy, w io.Writer) int` — `rows, capped, _ := s.AllDecisions(replay.MaxReplay, true)` (claude-code only), `replay.Rescore`, print `N decisions scored, M changed`, the transition table, each changed row `old→new`, and if `capped` a `NOTE: only first 50000 scored`, plus a one-line `NOTE: safe (unlogged) decisions are not covered`.
 
-- [ ] **Step 1: Failing test** — seed 1 `safe/allow` row whose command is `sudo rm -rf /`, call `Replay(s, policy.Default(), buf)`; assert output contains `allow->deny` and `1 changed`.
-- [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement**; wire `case "replay"` in main.go: open DB, load candidate from `--policy FILE` (default: current `~/.argus/policy.json`) or `--version N` (via `store.PolicyVersionJSON`), call `Replay`.
-- [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** `feat(cli): argus replay — re-score history against a candidate policy`.
+- [ ] **Step 1: Failing test** — seed a `low/allow` row that the candidate escalates; assert output has `1 changed` and the transition.
+- [ ] **Step 2–4:** wire `case "replay"` in main.go (`--policy FILE` default current `~/.argus/policy.json`, or `--version N` via `PolicyVersionJSON`). PASS.
+- [ ] **Step 5: Commit** `feat(cli): argus replay`.
 
 ---
 
-### Task 4: HTTP server scaffold + localhost bind + embedded static + graceful shutdown
+### Task 5: HTTP server scaffold — loopback bind + graceful shutdown + embedded static
 
-**Files:** Create `internal/web/server.go`, `internal/web/embed.go`, `internal/web/static/index.html` (minimal placeholder ok for THIS task), `internal/web/server_test.go`
-**Interfaces — Produces:**
-- `//go:embed static/*` → `var staticFS embed.FS` (in embed.go).
-- `type Server struct { … }`; `func New(s *store.Store, policyPath string, addr string) *Server`; `func (srv *Server) Handler() http.Handler` (returns the mux — testable with `httptest`); `func (srv *Server) ListenAndServe(ctx context.Context) error` (binds `addr`, serves, shuts down gracefully on ctx cancel).
-- Route `GET /` and `GET /static/*` → embedded files; unknown `/api/*` → 404 JSON.
+**Files:** Create `internal/web/server.go`, `internal/web/embed.go`, `internal/web/static/index.html` (placeholder), `server_test.go`
+**Produces:**
+- `//go:embed static/*` → `staticFS embed.FS`.
+- `func New(s *store.Store, policyPath, addr string) (*Server, error)` — validates `addr`: parse with `net.SplitHostPort`; empty/`0.0.0.0`/`::`/non-loopback host → error; port-only → rewrite host to `127.0.0.1`. Store the normalized addr.
+- `func (srv *Server) Handler() http.Handler` — mux wrapped in the middleware chain (Task 6). `GET /`, `GET /static/*` from `staticFS`; unknown `/api/*` → 404 JSON.
+- `func (srv *Server) ListenAndServe(ctx context.Context) error` — serve; on `ctx.Done()`, `Shutdown` with a **bounded 5 s context**; also signal the SSE loops to stop (a `srv.shutdown chan struct{}` closed here — Task 8 selects on it) so an open SSE connection can't block shutdown.
 
-- [ ] **Step 1: Failing tests** (use `net/http/httptest` on `Handler()`)
-```go
-func TestServesIndex(t *testing.T) {
-	srv := web.New(testStore(t), "", "127.0.0.1:0")
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "<") { t.Fatalf("index: %d", rec.Code) }
-}
-func TestUnknownApiIs404JSON(t *testing.T) {
-	srv := web.New(testStore(t), "", "127.0.0.1:0")
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/nope", nil))
-	if rec.Code != 404 { t.Fatalf("want 404, got %d", rec.Code) }
-}
-```
-- [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement.** `Handler()` wires an `http.ServeMux`: `/` and `/static/` from `staticFS` via `http.FileServerFS`; `/api/` handlers (added next tasks) default to a JSON 404. `ListenAndServe` uses `http.Server` + `srv.Shutdown` on `ctx.Done()`. Reject non-loopback `addr` hosts (only `127.0.0.1`/`localhost`/empty-host) — return an error from `New`/`ListenAndServe` if asked to bind a public interface. `index.html` can be a one-line placeholder in this task (real UI in Task 11).
-- [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** `feat(web): http server scaffold — embedded static, localhost-only bind, graceful shutdown`.
+- [ ] **Step 1: Failing tests** — `New(...,"127.0.0.1:4600")` ok; `New(...,":4600")` normalizes host to `127.0.0.1` (assert via an exported normalized-addr getter or by binding `:0` and checking `Addr()`); `New(...,"0.0.0.0:4600")` and `New(...,":4600")`-as-wildcard errors; `New(...,"1.2.3.4:80")` errors. `Handler()` serves `/` (200, contains `<`) and returns JSON 404 for `/api/nope`.
+- [ ] **Step 2–4:** implement; index.html one-line placeholder (real UI Tasks 12a–c). PASS.
+- [ ] **Step 5: Commit** `feat(web): server scaffold — loopback-only bind, embedded static, bounded graceful shutdown`.
 
 ---
 
-### Task 5: `GET /api/stats`
+### Task 6: Security middleware — Host allowlist + CSRF + body limit
 
-**Files:** Create `internal/web/handlers.go`, `internal/web/handlers_test.go`
-**Interfaces — Produces:** handler for `GET /api/stats` → JSON `{counts: {severity:n}, deny: n, sessions: n, recent: [Row…]}` using `store.Counts`, a deny tally (from `Counts`? no — deny is a verdict; compute via a small `store` deny count or derive from `Page`), `store.DistinctSessions`, `store.Recent(50)`.
-- Consumes: `store.{Counts,DistinctSessions,Recent}`.
-- Note: add `func (s *Store) VerdictCount(verdict string) (int, error)` to store if a deny count isn't otherwise available (keep minimal; or count denies within `Recent` and label it "recent deny" — prefer a real full-history `VerdictCount`).
+**Files:** Create `internal/web/middleware.go`, `middleware_test.go`; wire into `Handler()`
+**Produces:**
+- `hostGuard(next)` — reject (403 JSON) unless `r.Host` ∈ {`127.0.0.1:<port>`, `localhost:<port>`, `[::1]:<port>`} for the server's port. Applied to ALL routes (defeats DNS-rebinding).
+- `csrfGuard(next)` — for `PUT`/`POST`/`DELETE`: require `X-Argus-CSRF: 1` header AND `Content-Type: application/json`; else 403. GET/HEAD pass.
+- `limitBody(next)` — wrap `r.Body` in `http.MaxBytesReader(w, r.Body, 1<<20)`.
 
-- [ ] **Step 1: Failing test** — insert 1 high/deny + 2 low/allow; `GET /api/stats`; assert JSON decodes and `counts.high==1`, `counts.low==2`, `deny>=1`.
-- [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement**; if adding `VerdictCount`, add its store test in Task 1's file style (small).
-- [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** `feat(web): GET /api/stats`.
-
----
-
-### Task 6: `GET /api/decisions` (filtered page)
-
-**Files:** Modify `internal/web/handlers.go`, `handlers_test.go`
-**Interfaces — Produces:** `GET /api/decisions?severity=&limit=&before=` → JSON `{rows: [Row…], nextBefore: id}` via `store.Page`. `limit` clamped to `[1,200]` default 50.
-
-- [ ] **Step 1: Failing test** — insert high+low+low; `GET /api/decisions?severity=low` → 2 rows all low. `GET /api/decisions?limit=1` → 1 row + `nextBefore` set.
-- [ ] **Step 2: Run → FAIL.** — [ ] **Step 3: Implement.** — [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** `feat(web): GET /api/decisions (severity filter + pagination)`.
+- [ ] **Step 1: Failing tests** — a `GET /` with `Host: evil.com` → 403; with `Host: 127.0.0.1:4600` → 200. `PUT /api/policy` without `X-Argus-CSRF` → 403; with it + `application/json` → passes the guard (reaches handler). A `POST` with `Content-Type: text/plain` → 403.
+- [ ] **Step 2–4:** implement; chain order `hostGuard → csrfGuard → limitBody → mux`. PASS.
+- [ ] **Step 5: Commit** `feat(web): Host-allowlist (anti DNS-rebinding) + CSRF + body-limit middleware`.
 
 ---
 
-### Task 7: `GET /api/stream` — SSE live tail
+### Task 7: `GET /api/stats`
 
-**Files:** Create `internal/web/sse.go`, `internal/web/sse_test.go`; Modify `handlers.go`
-**Interfaces — Produces:** `GET /api/stream` sets `Content-Type: text/event-stream`, and on a ticker polls `store.DecisionsAfter(lastID, 100)`, emitting each new row as one SSE `data: <json>\n\n` event; starts the cursor at the current max id (only pushes rows recorded after connect). Respects request-context cancellation (client disconnect) and a poll interval constant (default 1s; injectable in tests).
+**Files:** `internal/web/handlers.go`, `handlers_test.go`
+**Produces:** `GET /api/stats` → `{counts:{sev:n}, deny:n, sessions:n, recent:[Row…]}` via `store.Counts`, `store.VerdictCount("deny")`, `store.DistinctSessions`, `store.Page("",50,0)` (use `Page`, not a second `Recent` call site). Per-project heatmap + trend are **explicitly descoped to a later iteration** (documented here — keep v1 lean; not silently dropped).
 
-- [ ] **Step 1: Failing test** — with a fast poll interval, open the stream via `httptest` server in a goroutine with a cancelable context, `Insert` a row, read from the response body, assert one `data:` line containing the row's severity arrives; then cancel and confirm the handler returns.
-- [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement** with a `flusher, _ := w.(http.Flusher)` push loop; guard when the writer is not a Flusher (return 500). Make the poll interval a package var or a `New`-time field so the test can set it small.
-- [ ] **Step 4: Run → PASS** (use a bounded read with a timeout so the test can't hang).
-- [ ] **Step 5: Commit** `feat(web): GET /api/stream — SSE live decision tail`.
+- [ ] **Step 1: Failing test** — 1 high/deny + 2 low/allow → `counts.high==1`, `counts.low==2`, `deny>=1`, decodes cleanly.
+- [ ] **Step 2–4:** PASS. — [ ] **Step 5: Commit** `feat(web): GET /api/stats`.
 
 ---
 
-### Task 8: `POST /api/explain`
+### Task 8: `GET /api/decisions` + `GET /api/stream` (SSE poll loop, no hub)
 
-**Files:** Modify `handlers.go`, `handlers_test.go`
-**Interfaces — Produces:** `POST /api/explain` body `{command,tool,cwd,mode}` → JSON `{severity, ruleId, reason, verdict, obfuscated, commands:[…], pipeSinks:[…]}` by building a `hook.Payload`, running `classify.Classify` against the server's current loaded policy, `verdict.Map`, and `shellast.Extract` for the facts. Reuses the engine — no reclassification logic here.
+**Files:** Modify `handlers.go`; Create `internal/web/sse.go`, `sse_test.go`
+**Produces:**
+- `GET /api/decisions?severity=&limit=&before=` → `{rows:[…], nextBefore:id}` via `store.Page`; `limit` clamped `[1,200]` default 50.
+- `GET /api/stream` — **one poll loop per connection, no pub/sub hub.** Set `text/event-stream`; seed cursor from `store.MaxID()`; on a ticker (interval a `New`-time field, default 1 s), `store.DecisionsAfter(cursor,100)`, emit each as `data: <json>\n\n`, advance cursor, `flusher.Flush()`. `defer ticker.Stop()`. Return promptly when EITHER the request context is done (client disconnect) OR `srv.shutdown` is closed (server shutdown). If `DecisionsAfter` returns "database is closed" (shutdown race), log-and-return — never panic. 500 if `w` is not an `http.Flusher`.
 
-- [ ] **Step 1: Failing test** — `POST /api/explain {"command":"sudo rm -rf /","tool":"Bash","mode":"default"}` → `severity=="high"`, `verdict=="deny"`, non-empty `ruleId`.
-- [ ] **Step 2: Run → FAIL.** — [ ] **Step 3: Implement.** — [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** `feat(web): POST /api/explain`.
-
----
-
-### Task 9: `GET/PUT /api/policy` + versions (close-the-loop editor)
-
-**Files:** Modify `handlers.go`, `handlers_test.go`
-**Interfaces — Produces:**
-- `GET /api/policy` → `{json: <current policy.json text>, versions: [VersionMeta…]}`.
-- `PUT /api/policy` body = candidate policy JSON → **validate via `policy` schema loader FIRST**; on invalid, `400` with the error and **leave `policy.json` untouched**; on valid, write `policy.json`, then `store.InsertPolicyVersion(maxVersion+1, "web", note, json, sha256)`, return `{version: N}`.
-- `GET /api/policy/versions/{v}` → that snapshot's JSON.
-
-- [ ] **Step 1: Failing tests** — `PUT` an invalid policy (`{"version":"x"}`) → 400 and the on-disk file is unchanged; `PUT` a valid minimal policy → 200, `policy.json` updated, a new `policy_versions` row exists; `GET /api/policy` returns the new json + a versions list.
-- [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement.** Compute `maxVersion` from `store.PolicyVersions()`. Use `policy.Load` semantics for validation — refactor a `policy.Validate([]byte) error` helper if `Load` only takes a path (add it to `internal/policy` with a tiny test; it wraps the existing schema-validate path).
-- [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** `feat(web): GET/PUT /api/policy with schema-validate + version snapshot`.
+- [ ] **Step 1: Failing tests** — `/api/decisions?severity=low` filter + `?limit=1` pagination. SSE: with a small interval, start the handler on an `httptest` server, `Insert` a row, read one `data:` line containing its severity (bounded-timeout read so it can't hang), then cancel the context and assert the handler returns; separately assert closing `srv.shutdown` also makes it return.
+- [ ] **Step 2–4:** implement. PASS.
+- [ ] **Step 5: Commit** `feat(web): GET /api/decisions + GET /api/stream (per-connection SSE, shutdown-aware)`.
 
 ---
 
-### Task 10: `POST /api/replay`
+### Task 9: `POST /api/explain`
 
-**Files:** Modify `handlers.go`, `handlers_test.go`
-**Interfaces — Produces:** `POST /api/replay` body = candidate policy JSON → validate → `store.AllDecisions(50000)` → `replay.Rescore` → JSON `{total, changed:[…], summary:{…}, capped}`.
+**Files:** `handlers.go`, `handlers_test.go`
+**Produces:** `POST /api/explain` body `{command,tool,cwd,mode,file}` → `{severity,ruleId,reason,verdict,obfuscated,commands:[…],pipeSinks:[…]}`. Build `hook.Payload` (include `ToolInput.FilePath` from `file` so Write/Edit decisions explain correctly, not just Bash), **load the policy per-request from `policyPath`** (always current after an edit — no cached-staleness, no lock), run `classify.Classify` + `verdict.Map` + `shellast.Extract`.
 
-- [ ] **Step 1: Failing test** — seed a `safe/allow` row with command `sudo rm -rf /`; `POST /api/replay` with `policy.Default()` JSON → `summary["allow->deny"]==1`, `total>=1`.
-- [ ] **Step 2: Run → FAIL.** — [ ] **Step 3: Implement** (reuse the Task 9 validator). — [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** `feat(web): POST /api/replay — simulate a candidate policy over history`.
-
----
-
-### Task 11: Frontend (no-build, embedded) — live tail, stats, explain, policy editor, replay
-
-**Files:** Replace `internal/web/static/index.html`; create `internal/web/static/app.js`, `internal/web/static/style.css`; Create `internal/web/frontend_test.go`
-**REQUIRED SKILL for the implementer:** invoke **dataviz** before writing the stats chart, and follow its palette/mark guidance; theme-aware light/dark per `prefers-color-scheme`.
-**Interfaces — Produces:** a single-page app (vanilla JS, no framework, no build) with tabs:
-- **Live** — `EventSource('/api/stream')` prepending rows; severity color (high=red, medium=amber, low=neutral); initial fill from `/api/decisions`.
-- **Stats** — `/api/stats`; a severity-distribution bar (inline SVG, dataviz palette), deny/sessions tiles.
-- **Explain** — a command box → `POST /api/explain` → shows severity/verdict/rule/facts.
-- **Policy** — `GET /api/policy` into a `<textarea>`; **Validate & Save** → `PUT /api/policy` (show 400 errors inline, success shows new version); a versions list.
-- **Replay** — edit/pick a candidate policy → `POST /api/replay` → render the transition summary + the changed-rows table (*"this change flips N ask→allow and newly catches M"*).
-
-- [ ] **Step 1: Failing test** — a Go test (`frontend_test.go`) asserts the embedded `index.html` is served at `/` and references `app.js`/`style.css`, and that `app.js`/`style.css` are served with sane content-types and non-empty bodies via `Handler()`. (UI logic itself is verified by the driven browser check in Task 13, not unit tests.)
-- [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement** the three static files. Keep `app.js` dependency-free (fetch, EventSource, DOM). No inline event-handler attributes that would need unsafe-inline if a CSP is added later — attach listeners in JS. No external CDN references (all assets local/embedded).
-- [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** `feat(web): no-build embedded frontend — live tail, stats, explain, policy editor, replay`.
+- [ ] **Step 1: Failing tests** — `{"command":"sudo rm -rf /","tool":"Bash","mode":"default"}` → severity high, verdict deny, non-empty ruleId. `{"file":"/x/.ssh/id_ed25519","tool":"Write","mode":"default"}` → high/deny (proves `file` wired).
+- [ ] **Step 2–4:** PASS. — [ ] **Step 5: Commit** `feat(web): POST /api/explain (Bash + Write/Edit)`.
 
 ---
 
-### Task 12: `argus serve` CLI
+### Task 10: `GET/PUT /api/policy` + versions (document-version audit, validate-before-write)
 
-**Files:** Create `internal/cli/serve.go`, `internal/cli/serve_test.go`; Modify `cmd/argus/main.go`
-**Interfaces — Produces:** `func Serve(home, addr string, w io.Writer) int` — open the DB (`~/.argus/argus.db`), build `web.New`, print the listen URL to `w`, run `ListenAndServe` until SIGINT/SIGTERM (signal.NotifyContext), then `store.Close()` on shutdown. Wire `case "serve"` with a `--addr` flag (default `127.0.0.1:4600`).
+**Files:** `handlers.go`, `handlers_test.go`
+**Produces:**
+- `GET /api/policy` → `{json:<current policy.json text>, versions:[VersionMeta…]}`.
+- `GET /api/policy/versions/{v}` → that snapshot's JSON (`store.PolicyVersionJSON`).
+- `PUT /api/policy` body = candidate policy JSON: `policy.Validate(body)` FIRST → on invalid `400` + **file untouched**; on valid, compute `next := maxVersion+1` from `store.PolicyVersions()`, **set the document's `version` field to `next`** (re-marshal), write `policy.json`, `store.InsertPolicyVersion(next,"web",note,json,sha256)`, return `{version:next}`. This keeps `decisions.policy_version` (gate writes `pol.Version`) resolvable to a snapshot (fixes the audit-divergence BLOCKING).
 
-- [ ] **Step 1: Failing test** — start `Serve` on `127.0.0.1:0`-style ephemeral (or call the server on an OS-assigned port) in a goroutine with a context, `GET /api/stats`, assert 200, then cancel and confirm clean return + `store.Close()` called (no leaked handle — assert a second `Open` of the same DB works). Keep it hermetic with a temp home.
-- [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement**; ensure `store.Close()` runs on shutdown (defer).
-- [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** `feat(cli): argus serve — localhost control-plane`.
-
----
-
-### Task 13: `argus doctor` seed-rule warning (parked Important from Plan-1 final review)
-
-**Files:** Modify `internal/cli/doctor.go`, `internal/cli/init_test.go` (or doctor_test.go)
-**Interfaces — Produces:** extend `Doctor` to add a non-fatal **WARN** line when the loaded `policy.json` is missing any of `Default()`'s baseline rule IDs (`rm-recursive`, `git-danger`, `sudo`, `docker-service`, `db-write`, `opaque-exec`) — a user-edited policy silently losing baseline `medium` coverage. WARN does NOT flip `Doctor`'s exit code (still 0 if the hard checks pass); it only surfaces the gap.
-
-- [ ] **Step 1: Failing test** — after `Init` (full default policy) `Doctor` prints no seed WARN; after overwriting `policy.json` with `{"version":1,"rules":[]}`, `Doctor` still returns 0 (hard checks pass) BUT its output contains a `WARN` mentioning the missing baseline rules.
-- [ ] **Step 2: Run → FAIL.**
-- [ ] **Step 3: Implement** — compare loaded rule IDs against a `policy.SeedRuleIDs()` helper (add it to `internal/policy`, derived from `Default()`).
-- [ ] **Step 4: Run → PASS.**
-- [ ] **Step 5: Commit** `feat(cli): doctor warns when policy is missing baseline seed rules`.
+- [ ] **Step 1: Failing tests** — invalid body (`{"version":"x"}`) → 400 AND on-disk file byte-identical to before; valid minimal policy → 200, on-disk `version` now `maxVersion+1`, a matching `policy_versions` row exists with the SAME version number; `GET /api/policy` returns updated json + versions list; `GET /api/policy/versions/{that}` returns it.
+- [ ] **Step 2–4:** implement (goes through the Task 6 CSRF/Host guards). PASS.
+- [ ] **Step 5: Commit** `feat(web): GET/PUT /api/policy + versions (document-version audit, validate-before-write)`.
 
 ---
 
-### Task 14: End-to-end server integration + driven browser check
+### Task 11: `POST /api/replay` + `POST /api/allowlist` (close-the-loop)
+
+**Files:** `handlers.go`, `handlers_test.go`
+**Produces:**
+- `POST /api/replay` body = candidate policy JSON → `policy.Validate` → `store.AllDecisions(replay.MaxReplay,true)` → `replay.Rescore` → `{total,changed:[…],summary:{…},capped}`.
+- `POST /api/allowlist` (the dropped close-the-loop, spec §6/§9) body `{command, tool, note}` → build an `Allow:true` rule that matches that command's shape (e.g. `Match.Cmd` = the resolved first command name via `shellast.Extract`, plus a tightening `Match.ArgMatches` from a stable substring of the command, or `Match.Raw` of the exact command — keep it as specific as practical), append it to the current policy, then go through the SAME validate → set version → write → snapshot path as PUT. **The always-high floor still wins** (allow rules can't downgrade a floor/`AlwaysHigh` hit — that's enforced by `classify.Classify`, so this endpoint doesn't need special-casing, but a test must prove a floor command stays denied after an allowlist attempt).
+
+- [ ] **Step 1: Failing tests** — `POST /api/replay` with `Default()` over a seeded escalatable `low/allow` row → a transition present, `total>=1`. `POST /api/allowlist {"command":"sudo apt-get update","tool":"Bash"}` → 200, a new version written, and afterward `POST /api/explain` of `sudo apt-get update` → allow/safe; BUT `POST /api/allowlist {"command":"sudo rm -rf /"}` then explain of `sudo rm -rf /` → STILL deny (floor non-downgradable).
+- [ ] **Step 2–4:** implement (CSRF/Host guarded). PASS.
+- [ ] **Step 5: Commit** `feat(web): POST /api/replay + POST /api/allowlist (close-the-loop, floor-capped)`.
+
+---
+
+### Task 12a: Frontend shell + Live + Stats
+
+**Files:** Replace `static/index.html`; create `static/app.mjs` (bootstrap/router), `static/live.mjs`, `static/stats.mjs`, `static/style.css`; optionally vendor `static/preact-htm.mjs` (single embedded ESM file, no npm); `frontend_test.go`
+**REQUIRED SKILL:** invoke **dataviz** before the stats chart. **Decision (closes spec open-question #2):** no-build, no toolchain; per-tab ES modules (never one monolith); a vendored Preact+htm ESM file is permitted for reactivity but no npm/build step. Theme-aware via `prefers-color-scheme`; no external CDN (all assets embedded); attach listeners in JS (no inline handlers).
+**Produces:** the shell (tab nav), **Live** (`EventSource('/api/stream')` prepend, initial fill from `/api/decisions`, severity colors), **Stats** (`/api/stats`, inline-SVG severity bar per dataviz + deny/sessions tiles).
+
+- [ ] **Step 1: Failing test** — Go test asserts `/` serves and references the module + css; each `.mjs`/`.css` served non-empty with a sane content-type.
+- [ ] **Step 2–4:** implement. PASS.
+- [ ] **Step 5: Commit** `feat(web): frontend shell + Live tail + Stats (no-build, per-tab modules)`.
+
+---
+
+### Task 12b: Frontend Explain + Policy editor + versions
+
+**Files:** create `static/explain.mjs`, `static/policy.mjs`; wire into the shell
+**Produces:** **Explain** (command/tool/mode/file box → `POST /api/explain` → severity/verdict/rule/facts). **Policy** editor (`GET /api/policy` into a textarea; **Validate & Save** → `PUT /api/policy` with `X-Argus-CSRF:1` + `application/json`; inline 400 errors; success shows new version; a versions list, click to view a snapshot). Note: JSON-Schema autocomplete (spec §3.2) is intentionally out for the no-build editor — validation-on-save is the guarantee.
+
+- [ ] **Step 1: Failing test** — the two modules are served non-empty; (behavioral UI verified in Task 14 driven check).
+- [ ] **Step 2–4:** implement. PASS.
+- [ ] **Step 5: Commit** `feat(web): frontend Explain + Policy editor/versions`.
+
+---
+
+### Task 12c: Frontend Replay + close-the-loop-from-row
+
+**Files:** create `static/replay.mjs`; add a row action into `live.mjs`/a decisions view
+**Produces:** **Replay** (edit/pick a candidate policy → `POST /api/replay` → transition summary + changed-rows table, with the "safe not covered" note). **Close-the-loop:** an "Allow / downgrade" control on each decision row → `POST /api/allowlist {command,tool}` (CSRF header) → toast the new version; UI notes that floor commands can't be downgraded (mirror the server behavior).
+
+- [ ] **Step 1: Failing test** — module served non-empty.
+- [ ] **Step 2–4:** implement. PASS.
+- [ ] **Step 5: Commit** `feat(web): frontend Replay simulator + close-the-loop from decision row`.
+
+---
+
+### Task 13: `argus serve` CLI
+
+**Files:** Create `internal/cli/serve.go`, `serve_test.go`; Modify `cmd/argus/main.go`
+**Produces:** `func Serve(home, addr string, w io.Writer) int` — open DB (`~/.argus/argus.db`), `web.New(store, policyPath, addr)` (error → print + exit non-zero), print the listen URL, `ListenAndServe` until SIGINT/SIGTERM (`signal.NotifyContext`), `defer store.Close()`. Wire `case "serve"` with `--addr` (default `127.0.0.1:4600`).
+
+- [ ] **Step 1: Failing test** — `Serve` on an ephemeral loopback port in a goroutine with a cancelable ctx AND an open SSE client; `GET /api/stats` → 200; cancel → assert `Serve` returns within the bounded window (proves SSE doesn't block shutdown) AND a fresh `store.Open` of the same DB succeeds afterward (proves `Close` ran).
+- [ ] **Step 2–4:** implement. PASS.
+- [ ] **Step 5: Commit** `feat(cli): argus serve`.
+
+---
+
+### Task 14: `argus doctor` seed-rule WARN (parked Plan-1 Important)
+
+**Files:** Modify `internal/cli/doctor.go`, its test
+**Produces:** `Doctor` prints a non-fatal `WARN` when the loaded policy is missing any `policy.SeedRuleIDs()` id (user-edited policy silently losing baseline `medium` coverage). WARN does NOT change the exit code (hard checks still govern 0/non-0).
+
+- [ ] **Step 1: Failing test** — after `Init` (full default) no seed WARN; after overwriting `policy.json` with `{"version":1,"rules":[]}`, `Doctor` returns 0 but output contains a `WARN` naming missing baseline rules.
+- [ ] **Step 2–4:** implement via `policy.SeedRuleIDs()`. PASS.
+- [ ] **Step 5: Commit** `feat(cli): doctor warns on missing baseline seed rules`.
+
+---
+
+### Task 15: End-to-end integration + driven browser check
 
 **Files:** Create `internal/web/e2e_test.go`
-**Interfaces — Consumes:** the whole `web` + `store` + engine stack.
-
-- [ ] **Step 1: Write the integration test** — spin the `Server.Handler()` in `httptest.NewServer`, then exercise the full API surface against a temp DB: seed decisions; `GET /api/stats` (counts correct); `GET /api/decisions?severity=high`; open `/api/stream`, insert a row, receive the SSE event; `POST /api/explain` (sudo rm → deny); `PUT /api/policy` invalid → 400 + file unchanged, valid → 200 + version bump; `POST /api/replay` (allow→deny transition present). One test, sequential, all assertions real.
-- [ ] **Step 2: Run → FAIL** (until all prior tasks land — this task runs last).
-- [ ] **Step 3: Make it pass**; fix any integration seam it exposes.
-- [ ] **Step 4: Driven check (not a unit test):** the controller (not this test) will `argus serve` on a temp home and drive the page with the claude-in-chrome browser tools — load `/`, confirm Live/Stats/Explain/Policy/Replay tabs render, run an explain and a replay from the UI, and screenshot. Record the result in the task report.
-- [ ] **Step 5: Commit** `test(web): end-to-end API integration across the control-plane`.
+- [ ] **Step 1: Integration test** — `httptest.NewServer(srv.Handler())` over a temp DB; exercise (with the `X-Argus-CSRF` header + correct Host): stats counts; `decisions?severity=high`; SSE receives an inserted row; explain (sudo rm→deny); **Host spoof → 403**; **CSRF-missing PUT → 403**; PUT invalid→400 file-unchanged, valid→200 version-bump with matching snapshot; replay transition present; allowlist downgrades a medium but NOT a floor command. One sequential test, real assertions.
+- [ ] **Step 2–3:** make it pass; fix any seam.
+- [ ] **Step 4: Driven check (controller, not a unit test):** `argus serve` on a temp home; drive with claude-in-chrome — load `/`, confirm all tabs render, run an explain + a replay + a policy save from the UI, screenshot; record in the report.
+- [ ] **Step 5: Commit** `test(web): end-to-end API + security integration`.
 
 ---
 
 ## Self-Review
 
-**Spec coverage (design §3.4, §6):** `serve` (T4/T12) · live tail SSE (T7) · stats (T5) · policy editor GET/PUT + versions (T9) · replay simulator engine+API+CLI (T2/T3/T10) · explain view (T8) · embedded no-build frontend (T11). Parked findings folded in: `store.Close()` (T1/T12), doctor seed-rule warn (T13). Distribution (Plan 3) and MCP/multi-harness (Plan 4) remain out of scope.
+**Spec coverage (§3.4, §6, §9):** serve (T5/T13) · live tail SSE (T8/T12a) · stats (T7/T12a; per-project heatmap+trend **explicitly descoped**, stated) · explain view (T9/T12b) · policy editor + versions (T10/T12b; schema-autocomplete **explicitly descoped**, stated) · replay simulator (T3/T4/T11/T12c) · **close-the-loop allow/downgrade from a row (T11/T12c — restored after review F1)** · parked findings: `store.Close()` (T1/T13), doctor seed-WARN (T14). Plans 3–4 out of scope.
 
-**Placeholder scan:** no "TBD"; every task has exact endpoints, signatures, and concrete test assertions. The only intentionally-minimal artifact is Task 4's placeholder `index.html`, explicitly replaced in Task 11.
+**Security (the 3 review BLOCKINGs):** loopback-only bind rejects `0.0.0.0`/empty/`:port`-wildcard (T5); Host-allowlist defeats DNS-rebinding + CSRF on mutating routes (T6); policy version = document version so audit/replay resolve (Global + T10). Mutating routes validate-before-write; bodies size-limited.
 
-**Type consistency:** `store.Row` (now with `ID`), `store.{Close,DecisionsAfter,Page,DistinctSessions,PolicyVersions,PolicyVersionJSON,AllDecisions,VerdictCount}`, `replay.{Change,Result,Rescore}`, `web.{New,Handler,ListenAndServe}`, `policy.{Validate,SeedRuleIDs}` are declared where produced and consumed with matching names/signatures. `Rescore` reconstructs `hook.Payload` with the exact field names from Plan 1 (`ToolName,PermissionMode,CWD,ToolInput{Command,FilePath}`).
+**Type consistency:** the "Consumes from Plan 1" appendix pins every reused signature; `Decision` uses `Reason`/`Obfuscated` (singular/bool) — the plan uses those, not "reasons"/"obfuscation". `VerdictCount`/`MaxID`/`DistinctSessions` are owned by Task 1 (not hand-waved in a handler task). `replay.{Change,Result,Rescore,MaxReplay}`, `policy.{Validate,SeedRuleIDs}`, `web.{New,Handler,ListenAndServe}` consistent producer→consumer.
 
-**Ordering:** T1→T2→T3 (store→replay→CLI); T4 before T5-T11 (server before handlers/frontend); T14 last. T13 is independent (can slot anywhere after T1).
+**Right-sizing:** the frontend is split T12a/b/c (each an independently reviewable gate). Backend tasks are one-file-focused.
 
-**Security note:** the only new attack surface is the localhost server; mitigated by loopback-only bind (T4 rejects public hosts), no auth needed for single-user local, schema-validation before any policy write (T9), and replay/stats/explain being read-only reuse of the authoritative engine.
+**Ordering:** T1→T2→T3→T4; T5→T6→(T7…T11 handlers)→T12a→b→c; T13 after server+handlers; T14 independent; T15 last.
+
+## Changelog (rev 1 → rev 2), from two adversarial reviews
+**Security BLOCKING fixed:** real loopback-bind (reject wildcard/empty) [T5]; Host-allowlist anti-DNS-rebinding + CSRF [T6]; policy version = document version (audit/replay alignment) [Global/T10]. **Coverage BLOCKING fixed:** close-the-loop allow/downgrade-from-row restored [T11/T12c]. **Should-fixed:** replay scope honest (logged/low+ only, reachable fixtures, safe-not-covered noted) [T3]; `VerdictCount`/`MaxID`/`DistinctSessions(WHERE session!='')` owned by store task [T1]; per-request policy load (no stale/no race) [T9]; bounded shutdown + SSE shutdown-aware (Close runs) [T5/T8/T13]; explain supports Write/Edit `file` [T9]; replay excludes legacy-import rows [T1/T4/T11]; frontend split into 3 tasks + no-build decision recorded + per-tab modules [T12a-c]; "Consumes from Plan 1" appendix + reason/obfuscated naming reconciled. **Nits:** Row.ID ripple fixed at all 3 round-trip sites + json tags (+jsonl key change noted) [T1]; MaxID source method [T1/T8]; ticker.Stop + db-closed log-not-panic [T8]; MaxReplay const [T3]; body-size limit [T6]; Recent-vs-Page dedup [T7]; heatmap/trend + schema-autocomplete descopes stated [T7/T12b].
