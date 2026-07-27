@@ -21,7 +21,25 @@ func main() {
 			fmt.Fprintf(os.Stderr, "argus: user home dir: %v\n", err)
 		}
 		os.Exit(cli.Gate(os.Stdin, os.Stdout, home))
-	// init|doctor|test|explain|stats wired in later tasks
+	case "init":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "argus: user home dir: %v\n", err)
+			os.Exit(1)
+		}
+		if err := cli.Init(home); err != nil {
+			fmt.Fprintf(os.Stderr, "argus: init: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("argus: initialized ~/.argus and wired the PreToolUse hook in ~/.claude/settings.json")
+	case "doctor":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "argus: user home dir: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(cli.Doctor(home, os.Stdout))
+	// test|explain|stats wired in later tasks
 	case "version", "--version", "-v":
 		fmt.Println("argus", version.String())
 	default:

@@ -140,6 +140,18 @@ func (s *Store) Counts() (map[string]int, error) {
 	return counts, nil
 }
 
+// PolicyVersionCount reports how many policy snapshots have been recorded.
+// Doctor uses it to confirm `argus init` seeded the audit trail; Init uses
+// it to avoid re-inserting the seed row on a repeat run (version is the
+// table's PRIMARY KEY, so a duplicate insert would error).
+func (s *Store) PolicyVersionCount() (int, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM policy_versions`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count policy versions: %w", err)
+	}
+	return n, nil
+}
+
 // InsertPolicyVersion records a policy snapshot so replay and audit can
 // reconstruct the exact policy in force at a given time.
 func (s *Store) InsertPolicyVersion(version int, author, note, policyJSON, hash string) error {
