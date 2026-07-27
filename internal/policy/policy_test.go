@@ -29,13 +29,13 @@ func TestDefaultDoesNotEmbedFloor(t *testing.T) {
 }
 
 func TestSchemaRejectsBadSeverity(t *testing.T) {
-	if _, err := loadBytes([]byte(`{"version":1,"rules":[{"id":"x","enabled":true,"tool":["Bash"],"severity":"hgih","reason":"typo"}]}`)); err == nil {
+	if err := Validate([]byte(`{"version":1,"rules":[{"id":"x","enabled":true,"tool":["Bash"],"severity":"hgih","reason":"typo"}]}`)); err == nil {
 		t.Fatal("schema must reject severity typo")
 	}
 }
 
 func TestSchemaRejectsNonIntVersion(t *testing.T) {
-	if _, err := loadBytes([]byte(`{"version":"nope","rules":[]}`)); err == nil {
+	if err := Validate([]byte(`{"version":"nope","rules":[]}`)); err == nil {
 		t.Fatal("version must be int")
 	}
 }
