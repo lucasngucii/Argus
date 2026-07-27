@@ -1,5 +1,20 @@
 package policy
 
+// leadBoundary anchors a self-protect/credential Raw pattern's start so it
+// fires on a real path segment — start of subject, after a path separator,
+// or after a shell word boundary (whitespace/`;`/`&`/`|`/`(`/quote) — never
+// mid-word. Without it, `(^|/)` alone misses a bare relative path like the
+// "bin/argus" in `rm bin/argus`, which is preceded by a space, not `/`.
+const leadBoundary = `(^|[\s;&|("'/])`
+
+// trailBoundary closes the segment: either it continues deeper (`/`), or the
+// shell word ends right there — whitespace, `;`, `&`, `|`, `)`, quote, or
+// end-of-subject. Deliberately not `\b`: `\b` would also accept `-` and `.`,
+// letting `bin/argus-cli` (an unrelated binary) or `bin/argus.bak` false-
+// positive. Without this at all, `rm bin/argus&&echo` escapes: `\s|$` alone
+// doesn't cover the metacharacter sitting directly against the path.
+const trailBoundary = `(/|[\s;&|)"']|$)`
+
 // Default returns the seed policy Argus ships with. It intentionally does
 // not embed Floor(): the classifier applies the floor as a separate pass on
 // every decision, so embedding it here would double-evaluate it.
@@ -38,7 +53,16 @@ func Floor() []Rule {
 		{ID: "db-destructive", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
 			Match: Match{ArgMatches: `(?i)\b(drop|truncate)\s+(table|database)\b|\bdelete\s+from\b|\.drop\(\)|deletemany`}, Reason: "DB destructive"},
 		{ID: "credential-system-write", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash", "Write", "Edit"},
-			Match:  Match{Raw: `(^|/)\.ssh/(id_[A-Za-z0-9_]+|authorized_keys)\b|(^|/)\.aws/credentials\b|>\s*/etc/|/etc/sudoers\b`},
+			// Two forms per credential dir: a file inside it (…/id_rsa,
+			// …/id_rsa.pub — the .pub case is over-inclusive but fail-safe, so
+			// left as-is; …/credentials), and the bare directory itself as the
+			// delete target (`rm -rf ~/.ssh`), which has neither a trailing
+			// "/" nor (for a relative path) a leading "/" to anchor on.
+			Match: Match{Raw: leadBoundary + `\.ssh/(id_[A-Za-z0-9_]+|authorized_keys)\b` +
+				`|` + leadBoundary + `\.ssh` + trailBoundary +
+				`|` + leadBoundary + `\.aws/credentials\b` +
+				`|` + leadBoundary + `\.aws` + trailBoundary +
+				`|>\s*/etc/|/etc/sudoers\b`},
 			Reason: "credential file or system-config write"},
 	}
 	return append(f, SelfProtectRules()...)
@@ -52,11 +76,20 @@ func Floor() []Rule {
 // membership, not regex, so it cannot express these suffix patterns.
 func SelfProtectRules() []Rule {
 	return []Rule{
+		// Both the settings file itself AND the bare .claude dir as a delete
+		// target (`rm -rf ~/.claude` has no trailing "/" to anchor the first
+		// alternative on).
 		{ID: "self-protect-claude-settings", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash", "Write", "Edit"},
-			Match:  Match{Raw: `(^|/)\.claude/settings(\.local)?\.json\b`},
+			Match: Match{Raw: leadBoundary + `\.claude/settings(\.local)?\.json\b` +
+				`|` + leadBoundary + `\.claude` + trailBoundary},
 			Reason: "self-protection: Claude Code hook wiring"},
+		// Both the .argus dir (bare-directory delete included, same reasoning
+		// as above) AND the binary — see leadBoundary/trailBoundary for why a
+		// plain (^|/)…(\s|$) anchor missed both a relative `bin/argus` (no
+		// leading "/") and a metachar-adjacent one (`rm bin/argus&&echo`).
 		{ID: "self-protect-argus", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash", "Write", "Edit"},
-			Match:  Match{Raw: `(^|/)\.argus/|(^|/)bin/argus(\s|$)`},
+			Match: Match{Raw: leadBoundary + `\.argus` + trailBoundary +
+				`|` + leadBoundary + `bin/argus` + trailBoundary},
 			Reason: "self-protection: argus config/db/binary"},
 	}
 }

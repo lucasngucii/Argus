@@ -76,10 +76,54 @@ func TestCredentialRulesStayFailSafe(t *testing.T) {
 		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "grep aws README.md"}},
 		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "cat /etc/hosts"}},
 		{ToolName: "Write", ToolInput: hook.ToolInput{FilePath: "/repo/docs/ssh-notes.md"}},
+		{ToolName: "Write", ToolInput: hook.ToolInput{FilePath: "app/settings.json"}},
+		{ToolName: "Write", ToolInput: hook.ToolInput{FilePath: "docs/aws-guide.md"}},
 	}
 	for _, p := range cases {
 		if got := Classify(p, pol).Severity; got == "high" {
 			t.Fatalf("false positive: %+v classified high", p.ToolInput)
+		}
+	}
+}
+
+// TestBareDirectoryDeleteIsHigh covers the review-flagged Critical 1: the
+// original patterns anchored on a trailing "/" (…/.argus/…), so deleting the
+// directory itself — which never has a trailing "/" or further path after
+// it — matched nothing and fell through to the generic rm-recursive medium
+// rule. `rm -rf ~/.argus` (etc.) must classify high exactly like deleting a
+// file inside it.
+func TestBareDirectoryDeleteIsHigh(t *testing.T) {
+	pol := policy.Default()
+	cases := []hook.Payload{
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm -rf ~/.argus"}},
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm -rf ~/.claude"}},
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm -rf ~/.ssh"}},
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm -rf ~/.aws"}},
+		// Same gap, relative form: no "~" means no leading "/" either, which
+		// (^|/) alone (the pre-fix anchor) also missed.
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm -rf .argus"}},
+	}
+	for _, p := range cases {
+		if got := Classify(p, pol).Severity; got != "high" {
+			t.Fatalf("bare directory delete not caught (got %s): %+v", got, p.ToolInput)
+		}
+	}
+}
+
+// TestMetacharAdjacentBinaryDeleteIsHigh covers the review-flagged Critical
+// 2: the original bin/argus pattern anchored its trailing boundary on
+// whitespace-or-end, so ordinary shell chaining with no space before the
+// metacharacter (`rm bin/argus&&echo done`) matched nothing and the whole
+// command classified safe.
+func TestMetacharAdjacentBinaryDeleteIsHigh(t *testing.T) {
+	pol := policy.Default()
+	cases := []hook.Payload{
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm bin/argus&&echo done"}},
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm -f bin/argus;echo x"}},
+	}
+	for _, p := range cases {
+		if got := Classify(p, pol).Severity; got != "high" {
+			t.Fatalf("metachar-adjacent binary delete escaped (got %s): %+v", got, p.ToolInput)
 		}
 	}
 }
