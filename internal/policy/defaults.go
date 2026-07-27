@@ -37,12 +37,26 @@ func Floor() []Rule {
 			Match: Match{PipesInto: []string{"sh", "bash", "zsh"}}, Reason: "pipe-to-shell"},
 		{ID: "db-destructive", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
 			Match: Match{ArgMatches: `(?i)\b(drop|truncate)\s+(table|database)\b|\bdelete\s+from\b|\.drop\(\)|deletemany`}, Reason: "DB destructive"},
+		{ID: "credential-system-write", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash", "Write", "Edit"},
+			Match:  Match{Raw: `(^|/)\.ssh/(id_[A-Za-z0-9_]+|authorized_keys)\b|(^|/)\.aws/credentials\b|>\s*/etc/|/etc/sudoers\b`},
+			Reason: "credential file or system-config write"},
 	}
 	return append(f, SelfProtectRules()...)
 }
 
-// SelfProtectRules returns the rules that keep Argus from exempting its own
-// config/binary/hook/db paths (CLAUDE.md §5).
-//
-// TODO(Task 8): real self-protection rules.
-func SelfProtectRules() []Rule { return nil }
+// SelfProtectRules returns the rules that keep an agent from disarming Argus
+// itself (CLAUDE.md §5): the Claude Code hook wiring that invokes the gate,
+// and Argus's own config/db/binary. Every match is a home-independent regex
+// on Match.Raw (never os.UserHomeDir — see the doc comment on Floor callers
+// in classify.Classify, which must stay pure); RedirectsTo is exact-string
+// membership, not regex, so it cannot express these suffix patterns.
+func SelfProtectRules() []Rule {
+	return []Rule{
+		{ID: "self-protect-claude-settings", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash", "Write", "Edit"},
+			Match:  Match{Raw: `(^|/)\.claude/settings(\.local)?\.json\b`},
+			Reason: "self-protection: Claude Code hook wiring"},
+		{ID: "self-protect-argus", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash", "Write", "Edit"},
+			Match:  Match{Raw: `(^|/)\.argus/|(^|/)bin/argus(\s|$)`},
+			Reason: "self-protection: argus config/db/binary"},
+	}
+}
