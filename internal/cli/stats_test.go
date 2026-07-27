@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -69,9 +70,20 @@ func TestStats_JSONL(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("got %d JSONL lines, want 3:\n%s", len(lines), buf.String())
 	}
-	for _, line := range lines {
-		if !strings.HasPrefix(line, "{") || !strings.HasSuffix(line, "}") {
-			t.Errorf("line is not a JSON object: %q", line)
+	// Each line must decode into a real store.Row (not just "looks like
+	// JSON"), and the export is oldest-first: t1 (high), t2 (low), t3 (low).
+	wantTS := []string{"t1", "t2", "t3"}
+	wantSeverity := []string{"high", "low", "low"}
+	for i, line := range lines {
+		var got store.Row
+		if err := json.Unmarshal([]byte(line), &got); err != nil {
+			t.Fatalf("line %d did not decode as store.Row: %v\nline: %s", i, err, line)
+		}
+		if got.TS != wantTS[i] {
+			t.Errorf("line %d TS = %q, want %q", i, got.TS, wantTS[i])
+		}
+		if got.Severity != wantSeverity[i] {
+			t.Errorf("line %d Severity = %q, want %q", i, got.Severity, wantSeverity[i])
 		}
 	}
 }

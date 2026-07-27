@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/lucasngucii/argus/internal/store"
 )
@@ -73,11 +74,16 @@ func Stats(s *store.Store, w io.Writer, jsonl bool) int {
 
 // writeJSONL streams rows as one JSON object per line, oldest first. rows
 // arrives newest-first (store.Recent's order); a continuity export reads
-// naturally in the order decisions actually happened.
+// naturally in the order decisions actually happened. A write failure here
+// (disk-full when redirected to a file, a broken pipe from `| head`) is
+// logged to stderr and stops the export rather than silently truncating it
+// with no signal at all — consistent with Gate's error-visibility
+// discipline (gate.go's emitOrBlock).
 func writeJSONL(rows []store.Row, w io.Writer) {
 	enc := json.NewEncoder(w)
 	for i := len(rows) - 1; i >= 0; i-- {
 		if err := enc.Encode(rows[i]); err != nil {
+			fmt.Fprintf(os.Stderr, "argus: stats: jsonl write: %v\n", err)
 			return
 		}
 	}
