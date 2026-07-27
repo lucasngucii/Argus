@@ -155,24 +155,29 @@ func appendCmd(name string, nameResolved bool, argWords []*syntax.Word, vars map
 	}
 }
 
-// emitInner surfaces the command wrapped by a prefix wrapper as its own Cmd,
-// skipping the wrapper's leading option flags and NAME=VALUE tokens. One level:
-// a wrapped wrapper is not re-unwrapped (the brief's scope).
+// emitInner surfaces the command wrapped by a prefix wrapper as its own Cmd(s).
+// A wrapper's option grammar varies (`sudo -u root cmd`, `timeout 5 cmd`,
+// `nice -n 10 cmd`), so guessing the single inner word is unsafe: picking the
+// option value (`root`/`5`) instead of the real command would hide a dangerous
+// verb and clear obfuscation. Instead we emit EVERY non-flag, non-NAME=VALUE
+// token as a candidate command — each with the tokens after it as its args, so a
+// target scorer still sees `rm`'s `/`. Over-emitting a harmless phantom (`5`) is
+// the fail-safe direction; under-emitting the real `rm` is the dangerous one.
+// One level: a wrapped wrapper is not re-unwrapped (the brief's scope).
 func emitInner(rest []*syntax.Word, vars map[string]string, f *Facts) {
-	i := 0
-	for i < len(rest) {
-		text, ok := resolveWord(rest[i], vars)
+	emitted := false
+	for j, w := range rest {
+		text, ok := resolveWord(w, vars)
 		if ok && (strings.HasPrefix(text, "-") || assignToken.MatchString(text)) {
-			i++
-			continue
+			continue // an option flag or NAME=VALUE assignment, not a command
 		}
-		break
+		appendCmd(text, ok, rest[j+1:], vars, f)
+		emitted = true
 	}
-	if i >= len(rest) {
-		return
+	if !emitted {
+		// No plausible inner command surfaced — fail closed.
+		f.Obfuscated = true
 	}
-	name, resolved := resolveWord(rest[i], vars)
-	appendCmd(name, resolved, rest[i+1:], vars, f)
 }
 
 // resolveWord returns the literal text of a word and whether it resolved fully.
