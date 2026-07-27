@@ -16,7 +16,10 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "gate":
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "argus: user home dir: %v\n", err)
+		}
 		os.Exit(cli.Gate(os.Stdin, os.Stdout, home))
 	// init|doctor|test|explain|stats wired in later tasks
 	case "version", "--version", "-v":

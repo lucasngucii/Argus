@@ -15,16 +15,23 @@ import (
 )
 
 // Gate is the synchronous hot path Claude Code invokes as a PreToolUse
-// hook: parse -> classify -> best-effort record -> emit. It always returns
-// 0 — blocking happens via the emitted JSON's permissionDecision, not the
-// process exit code — and a top-level recover fail-closes to "deny" so a
-// bug anywhere in this path can never silently allow a dangerous command
-// (CLAUDE.md §2).
+// hook: parse -> classify -> best-effort record -> emit. In the normal
+// case blocking happens via the emitted JSON's permissionDecision, not the
+// process exit code, so Gate returns 0. It returns 2 only when the stdout
+// emit itself fails (broken pipe / closed fd): with no hookSpecificOutput
+// on stdout, Claude Code would treat that as "no opinion" and run the tool
+// unprompted in bypassPermissions, so a failed emit must fail-closed via
+// the exit code instead (see emitOrBlock). A top-level recover fail-closes
+// to "deny" so a bug anywhere in this path can never silently allow a
+// dangerous command (CLAUDE.md §2).
 func Gate(stdin io.Reader, stdout io.Writer, home string) (code int) {
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "argus: gate: recovered panic: %v\n", r)
-			_ = verdict.Emit(stdout, "deny", "internal error (fail-closed)")
+			if !emitOrBlock(stdout, "deny", "internal error (fail-closed)") {
+				code = 2
+				return
+			}
 			code = 0
 		}
 	}()
@@ -33,7 +40,9 @@ func Gate(stdin io.Reader, stdout io.Writer, home string) (code int) {
 	if err != nil {
 		// Unparseable payload is itself an anomaly, not a benign no-op.
 		fmt.Fprintf(os.Stderr, "argus: gate: parse payload: %v\n", err)
-		_ = verdict.Emit(stdout, "deny", "unparseable payload")
+		if !emitOrBlock(stdout, "deny", "unparseable payload") {
+			return 2
+		}
 		return 0
 	}
 
@@ -59,8 +68,26 @@ func Gate(stdin io.Reader, stdout io.Writer, home string) (code int) {
 		emitted = "allow"
 	}
 
-	_ = verdict.Emit(stdout, emitted, decision.Reason)
+	if !emitOrBlock(stdout, emitted, decision.Reason) {
+		return 2
+	}
 	return 0
+}
+
+// emitOrBlock writes v/reason to stdout via verdict.Emit and reports whether
+// the write succeeded. A failed emit is the one I/O path that can produce an
+// effective allow: Claude Code treats a hook with no hookSpecificOutput on
+// stdout as "no opinion" and, in bypassPermissions, runs the tool
+// unprompted. So the write failing must itself fail-closed — the caller
+// returns exit code 2, which the Claude Code hooks contract blocks the tool
+// call on (stderr is fed back instead of the now-unwritable stdout JSON),
+// in every permission mode including bypass.
+func emitOrBlock(stdout io.Writer, v, reason string) bool {
+	if err := verdict.Emit(stdout, v, reason); err != nil {
+		fmt.Fprintf(os.Stderr, "argus: gate: emit verdict: %v\n", err)
+		return false
+	}
+	return true
 }
 
 // recordDecision persists a non-safe decision. It is best-effort: store
