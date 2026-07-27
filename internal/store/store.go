@@ -7,25 +7,28 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
 
-// Row is one recorded decision.
+// Row is one recorded decision. JSON tags give the web API and the JSONL
+// export stable snake_case keys independent of Go field-naming conventions.
 type Row struct {
-	TS             string
-	Session        string
-	CWD            string
-	Tool           string
-	Command        string
-	File           string
-	Severity       string
-	Verdict        string
-	PermissionMode string
-	RuleID         string
-	Harness        string
-	PolicyVersion  int
-	Obfuscation    bool
+	ID             int    `json:"id"`
+	TS             string `json:"ts"`
+	Session        string `json:"session"`
+	CWD            string `json:"cwd"`
+	Tool           string `json:"tool"`
+	Command        string `json:"command"`
+	File           string `json:"file"`
+	Severity       string `json:"severity"`
+	Verdict        string `json:"verdict"`
+	PermissionMode string `json:"permission_mode"`
+	RuleID         string `json:"rule_id"`
+	Harness        string `json:"harness"`
+	PolicyVersion  int    `json:"policy_version"`
+	Obfuscation    bool   `json:"obfuscation"`
 }
 
 // Store is a handle to the Argus SQLite database.
@@ -92,29 +95,134 @@ func (s *Store) Insert(r Row) error {
 	return nil
 }
 
-// Recent returns the most recent decisions, newest first, up to limit.
-func (s *Store) Recent(limit int) ([]Row, error) {
-	rows, err := s.db.Query(
-		`SELECT ts, session, cwd, tool, command, file, severity, verdict, permission_mode, rule_id, policy_version, harness, obfuscation
-		 FROM decisions ORDER BY id DESC LIMIT ?`, limit,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query recent: %w", err)
-	}
-	defer rows.Close()
+// rowColumns is the column list (in Row field order) shared by every read
+// method below, so the SELECT and the Scan stay in lockstep in one place.
+const rowColumns = `id, ts, session, cwd, tool, command, file, severity, verdict, permission_mode, rule_id, harness, policy_version, obfuscation`
 
+// scanRows drains a rowColumns-shaped *sql.Rows into []Row, closing it.
+func scanRows(rows *sql.Rows) ([]Row, error) {
+	defer rows.Close()
 	var out []Row
 	for rows.Next() {
 		var r Row
-		if err := rows.Scan(&r.TS, &r.Session, &r.CWD, &r.Tool, &r.Command, &r.File, &r.Severity, &r.Verdict, &r.PermissionMode, &r.RuleID, &r.PolicyVersion, &r.Harness, &r.Obfuscation); err != nil {
-			return nil, fmt.Errorf("scan recent: %w", err)
+		if err := rows.Scan(&r.ID, &r.TS, &r.Session, &r.CWD, &r.Tool, &r.Command, &r.File, &r.Severity, &r.Verdict, &r.PermissionMode, &r.RuleID, &r.Harness, &r.PolicyVersion, &r.Obfuscation); err != nil {
+			return nil, fmt.Errorf("scan row: %w", err)
 		}
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate recent: %w", err)
+		return nil, fmt.Errorf("iterate rows: %w", err)
 	}
 	return out, nil
+}
+
+// Recent returns the most recent decisions, newest first, up to limit.
+func (s *Store) Recent(limit int) ([]Row, error) {
+	rows, err := s.db.Query(`SELECT `+rowColumns+` FROM decisions ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query recent: %w", err)
+	}
+	return scanRows(rows)
+}
+
+// MaxID returns the highest decision id recorded, or 0 if none exist. The
+// SSE stream (Plan 2 Task 8) seeds its cursor from this so it only tails
+// decisions inserted after the connection opened.
+func (s *Store) MaxID() (int, error) {
+	var id int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(id),0) FROM decisions`).Scan(&id); err != nil {
+		return 0, fmt.Errorf("max id: %w", err)
+	}
+	return id, nil
+}
+
+// DecisionsAfter returns decisions with id > afterID, oldest first, up to
+// limit — the SSE poll loop's incremental read.
+func (s *Store) DecisionsAfter(afterID, limit int) ([]Row, error) {
+	rows, err := s.db.Query(`SELECT `+rowColumns+` FROM decisions WHERE id > ? ORDER BY id ASC LIMIT ?`, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query decisions after: %w", err)
+	}
+	return scanRows(rows)
+}
+
+// Page returns decisions newest first, optionally filtered to one severity
+// and/or paged with a cursor: beforeID<=0 starts from the newest row,
+// otherwise only ids strictly less than beforeID are returned. An empty
+// severity matches all severities.
+func (s *Store) Page(severity string, limit, beforeID int) ([]Row, error) {
+	query := `SELECT ` + rowColumns + ` FROM decisions`
+	var clauses []string
+	var args []any
+	if severity != "" {
+		clauses = append(clauses, "severity = ?")
+		args = append(args, severity)
+	}
+	if beforeID > 0 {
+		clauses = append(clauses, "id < ?")
+		args = append(args, beforeID)
+	}
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY id DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query page: %w", err)
+	}
+	return scanRows(rows)
+}
+
+// AllDecisions returns decisions oldest first, up to cap rows. When
+// claudeCodeOnly is set, only Harness=="claude-code" rows are returned —
+// excluding the legacy agent-review import, which was scored by a
+// different engine and would corrupt a replay. capped reports whether more
+// rows existed than cap allowed through.
+func (s *Store) AllDecisions(cap int, claudeCodeOnly bool) (rows []Row, capped bool, err error) {
+	query := `SELECT ` + rowColumns + ` FROM decisions`
+	var args []any
+	if claudeCodeOnly {
+		query += ` WHERE harness = ?`
+		args = append(args, "claude-code")
+	}
+	query += ` ORDER BY id ASC LIMIT ?`
+	args = append(args, cap+1)
+
+	sqlRows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("query all decisions: %w", err)
+	}
+	out, err := scanRows(sqlRows)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(out) > cap {
+		return out[:cap], true, nil
+	}
+	return out, false, nil
+}
+
+// DistinctSessions counts distinct non-empty session ids across all
+// history. The empty session (hook events with no session id) is excluded,
+// matching the CLI's stats.go behavior.
+func (s *Store) DistinctSessions() (int, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT session) FROM decisions WHERE session != ''`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("distinct sessions: %w", err)
+	}
+	return n, nil
+}
+
+// VerdictCount reports the full-history count of decisions with the given
+// verdict (e.g. "deny").
+func (s *Store) VerdictCount(verdict string) (int, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM decisions WHERE verdict = ?`, verdict).Scan(&n); err != nil {
+		return 0, fmt.Errorf("verdict count: %w", err)
+	}
+	return n, nil
 }
 
 // Counts returns the full-history count of decisions per severity.
@@ -169,6 +277,57 @@ func (s *Store) InsertPolicyVersion(version int, author, note, policyJSON, hash 
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit policy version: %w", err)
+	}
+	return nil
+}
+
+// VersionMeta is one policy_versions row without the full policy JSON body
+// — the audit-trail listing the web policy editor renders.
+type VersionMeta struct {
+	Version int
+	TS      string
+	Author  string
+	Note    string
+	Hash    string
+}
+
+// PolicyVersions lists recorded policy snapshots newest first.
+func (s *Store) PolicyVersions() ([]VersionMeta, error) {
+	rows, err := s.db.Query(`SELECT version, ts, author, note, hash FROM policy_versions ORDER BY version DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("query policy versions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []VersionMeta
+	for rows.Next() {
+		var v VersionMeta
+		if err := rows.Scan(&v.Version, &v.TS, &v.Author, &v.Note, &v.Hash); err != nil {
+			return nil, fmt.Errorf("scan policy version: %w", err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate policy versions: %w", err)
+	}
+	return out, nil
+}
+
+// PolicyVersionJSON returns the full policy document text recorded for a
+// given version, for the "view snapshot" / replay --version path.
+func (s *Store) PolicyVersionJSON(version int) (string, error) {
+	var j string
+	if err := s.db.QueryRow(`SELECT policy_json FROM policy_versions WHERE version = ?`, version).Scan(&j); err != nil {
+		return "", fmt.Errorf("policy version json: %w", err)
+	}
+	return j, nil
+}
+
+// Close releases the underlying database handle. Callers (argus serve)
+// defer this on shutdown.
+func (s *Store) Close() error {
+	if err := s.db.Close(); err != nil {
+		return fmt.Errorf("close db: %w", err)
 	}
 	return nil
 }
