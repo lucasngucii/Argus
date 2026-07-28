@@ -4,6 +4,12 @@
 > roadmap item (design doc §9). Multi-harness (Codex/Gemini) is a separate
 > sub-project, out of scope here. Grounded in verified Claude Code hook behavior
 > (see "Grounding" below) — not assumptions.
+>
+> **The authoritative, review-corrected design is the plan**
+> [`docs/superpowers/plans/2026-07-28-mcp-gating.md`](../plans/2026-07-28-mcp-gating.md)
+> **(rev 2).** Three adversarial reviews corrected this spec's first draft — see
+> the Changelog at the end. Where this document and the rev-2 plan differ, the
+> plan governs.
 
 ## The gap
 
@@ -175,3 +181,42 @@ Per CLAUDE.md (golden + evasion, deterministic):
 4. **Plugin-form server parsing.** v1 treats `mcp__plugin_<plugin>_<server>__…`
    with the whole `plugin_<plugin>_<server>` as the "server" string. Good enough
    for name matching; a finer split can come later if a rule needs it.
+
+## Changelog (draft → rev 2, from three adversarial reviews)
+
+**BLOCKING fixed:**
+- The mutating-verb regex used `\b`, which does not split snake_case (`delete_file`
+  → no match), so the rule would ship inert and its own test would fail. Fixed to
+  `(^|_)verb(_|$)` [plan T5].
+- The `ToolInput.UnmarshalJSON` draft swallowed decode errors, fail-**open**ing a
+  mistyped Bash `command`. Moved to `Payload.UnmarshalJSON`; only MCP tolerates a
+  non-string command/file_path, Bash/Write stay fail-closed [plan T1].
+- The "extend the credential/self-protect floor to MCP args for free" idea was
+  wrong twice over: (a) a bare path substring in **freeform** args (a docs-search
+  query mentioning `~/.ssh`) would be a non-recoverable floor FP; (b) adding
+  `McpTool` to a shared rule disables it for Bash. Replaced with ONE dedicated MCP
+  floor rule `mcp-fileop-sensitive-path` that AND-gates a **file-op tool name**
+  against the sensitive-path match [plan T4].
+
+**Should-fixed:**
+- Destructive-SQL-in-args demoted from floor to `medium` (freeform keyword
+  heuristic; consistent with the Bash `db-write` rule) [plan T5].
+- Verb list widened with the high-impact, name-guessable
+  `send|publish|revoke|deploy|merge|apply|grant|transfer` (each was silently
+  `allow`) [plan T5].
+- **Store/replay data hole:** MCP decisions were logged with empty command/file →
+  blank in the Live tail and re-scored as `safe` by replay forever. The MCP
+  subject is now persisted in the `Command` column and reconstructed into
+  `ToolInput.Raw` on replay [plan T6].
+- **Doctor remedy no-op:** the WARN said "re-run argus init" but `wireHook`
+  short-circuited without updating a stale matcher. `wireHook` now self-heals the
+  matcher; a `gateMatcherOf` helper backs the WARN [plan T7].
+- **Explain gap:** MCP rules were undryrunnable. `explain` (web + CLI) now accepts
+  an MCP tool name + args JSON [plan T8]. The corpus harness's Bash/file-only
+  boundary is made explicit rather than silently mis-routing an `mcp__*` line.
+
+**Now stated honestly (was overclaimed):** extending protection to MCP is NOT
+"free" — the floor is deliberately AND-gated to avoid non-recoverable FPs on
+freeform args, and a mutating tool with an innocuous name is `allow` unless a
+per-server rule is added (an "ask-once-per-new-(server,tool)" resolved in the
+dirty shell is noted as a future option).
