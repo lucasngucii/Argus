@@ -20,6 +20,8 @@ type Match struct {
 	RedirectsTo  string   `json:"redirectsTo,omitempty"`
 	TargetScorer string   `json:"targetScorer,omitempty"`
 	Raw          string   `json:"raw,omitempty"` // regexp on subject (escape hatch)
+	McpServer    []string `json:"mcpServer,omitempty"` // MCP server segment, ANY-of exact
+	McpTool      string   `json:"mcpTool,omitempty"`   // regexp on the MCP tool segment
 }
 
 // Condition is a predicate a ContextEscalation checks before raising a
