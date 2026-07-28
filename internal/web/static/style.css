@@ -297,6 +297,21 @@ button:hover {
   border-bottom: 1px solid var(--border);
 }
 
+/* Toast */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--bg);
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  z-index: 10;
+}
+
 /* Severity chart */
 .sev-chart {
   max-width: 100%;

@@ -8,9 +8,9 @@ import * as live from "/static/live.mjs";
 import * as stats from "/static/stats.mjs";
 import * as explain from "/static/explain.mjs";
 import * as policy from "/static/policy.mjs";
+import * as replay from "/static/replay.mjs";
 
-// Replay (Task 12c) appends its module here.
-const tabs = [live, stats, explain, policy];
+const tabs = [live, stats, explain, policy, replay];
 
 let cleanup = null;
 

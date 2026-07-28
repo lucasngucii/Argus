@@ -44,6 +44,7 @@ func TestFrontend_AssetsServedWithSaneTypes(t *testing.T) {
 		"/static/stats.mjs":   "javascript",
 		"/static/explain.mjs": "javascript",
 		"/static/policy.mjs":  "javascript",
+		"/static/replay.mjs":  "javascript",
 		"/static/style.css":   "css",
 	}
 	for path, wantCT := range cases {

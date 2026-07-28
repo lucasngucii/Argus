@@ -11,9 +11,11 @@ export function mount(el) {
   el.innerHTML = `
     <section class="panel">
       <h2>Live decisions</h2>
+      <p class="muted">Allow adds an allowlist rule for that exact command; always-high
+        (floor) commands can't be downgraded.</p>
       <table class="rows">
         <thead>
-          <tr><th>time</th><th>sev</th><th>tool</th><th>subject</th><th>verdict</th></tr>
+          <tr><th>time</th><th>sev</th><th>tool</th><th>subject</th><th>verdict</th><th></th></tr>
         </thead>
         <tbody id="live-rows"></tbody>
       </table>
@@ -44,12 +46,53 @@ export function mount(el) {
 export function rowEl(row) {
   const tr = document.createElement("tr");
   const sev = SEVERITIES.includes(row.severity) ? row.severity : "safe";
+  const subject = row.command || row.file || "";
   tr.appendChild(td(shortTime(row.ts)));
   tr.appendChild(sevCell(sev));
   tr.appendChild(td(row.tool || ""));
-  tr.appendChild(td(row.command || row.file || "", "subject"));
+  tr.appendChild(td(subject, "subject"));
   tr.appendChild(td(row.verdict || ""));
+  tr.appendChild(allowCell(subject, row.tool || "Bash"));
   return tr;
+}
+
+// allowCell renders the close-the-loop "Allow" control: it posts an allowlist
+// rule for exactly this command. The server-side floor still wins, so a floor
+// command gets a new policy version but stays denied — the panel note says so.
+function allowCell(subject, tool) {
+  const cell = document.createElement("td");
+  if (!subject) return cell;
+  const btn = document.createElement("button");
+  btn.className = "linkish";
+  btn.textContent = "Allow";
+  btn.addEventListener("click", () => {
+    btn.disabled = true;
+    fetch("/api/allowlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Argus-CSRF": "1" },
+      body: JSON.stringify({ command: subject, tool }),
+    })
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        if (r.ok) toast(`allowlisted → policy v${d.version}`);
+        else toast(d.error || `allowlist failed (${r.status})`);
+      })
+      .catch((err) => toast("allowlist failed: " + err))
+      .finally(() => {
+        btn.disabled = false;
+      });
+  });
+  cell.appendChild(btn);
+  return cell;
+}
+
+// toast shows a transient message bottom-center. Kept dependency-free.
+function toast(msg) {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
 }
 
 function sevCell(sev) {
