@@ -138,18 +138,29 @@ func notFoundJSON(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"error":"not found"}`))
 }
 
-// ListenAndServe serves until ctx is cancelled, then shuts down gracefully
-// within shutdownGrace. On cancel it first closes srv.shutdown so the SSE
-// loops stop pushing and return, then calls http.Server.Shutdown with a
-// bounded context — so an open stream can neither block the drain nor be left
-// dangling. A normal shutdown returns nil; only a bind/serve failure or a
-// drain that overruns the grace window returns an error.
-func (srv *Server) ListenAndServe(ctx context.Context) error {
-	hs := &http.Server{Addr: srv.addr, Handler: srv.Handler()}
+// ListenAndServe binds the loopback address and serves until ctx is cancelled,
+// then shuts down gracefully within shutdownGrace. It binds up front so a bind
+// failure is returned synchronously, and rewrites srv.addr to the concrete
+// bound address (resolving an ephemeral :0 port) before calling the optional
+// onReady hook — so a caller can print the real listen URL. On cancel it first
+// closes srv.shutdown so the SSE loops stop pushing and return, then calls
+// Shutdown with a bounded context — an open stream can neither block the drain
+// nor be left dangling. A normal shutdown returns nil; only a bind/serve
+// failure or a drain that overruns the grace window returns an error.
+func (srv *Server) ListenAndServe(ctx context.Context, onReady func(addr string)) error {
+	ln, err := net.Listen("tcp", srv.addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", srv.addr, err)
+	}
+	srv.addr = ln.Addr().String()
+	if onReady != nil {
+		onReady(srv.addr)
+	}
 
+	hs := &http.Server{Handler: srv.Handler()}
 	serveErr := make(chan error, 1)
 	go func() {
-		err := hs.ListenAndServe()
+		err := hs.Serve(ln)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}

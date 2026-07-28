@@ -105,7 +105,7 @@ func TestListenAndServe_ShutsDownOnContextCancel(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- srv.ListenAndServe(ctx) }()
+	go func() { done <- srv.ListenAndServe(ctx, nil) }()
 
 	// Give the listener a moment, then cancel.
 	select {

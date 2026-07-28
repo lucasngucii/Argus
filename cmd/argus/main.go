@@ -2,11 +2,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/lucasngucii/argus/internal/cli"
 	"github.com/lucasngucii/argus/internal/policy"
@@ -87,6 +90,8 @@ func main() {
 			os.Exit(1)
 		}
 		os.Exit(cli.Stats(st, os.Stdout, *jsonl))
+	case "serve":
+		os.Exit(runServe(os.Args[2:]))
 	case "replay":
 		os.Exit(runReplay(os.Args[2:]))
 	case "version", "--version", "-v":
@@ -95,6 +100,24 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+}
+
+// runServe wires `argus serve`: it runs the loopback control-plane until the
+// process receives SIGINT/SIGTERM, at which point signal.NotifyContext cancels
+// the context and cli.Serve shuts down gracefully and closes the store.
+func runServe(argv []string) int {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	addr := fs.String("addr", "127.0.0.1:4600", "loopback address to bind")
+	fs.Parse(argv)
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "argus: user home dir: %v\n", err)
+		return 1
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return cli.Serve(ctx, home, *addr, os.Stdout)
 }
 
 // runReplay resolves the candidate policy (a file via --policy, default
@@ -153,5 +176,5 @@ func replayCandidate(st *store.Store, home, policyPath string, ver int) (policy.
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: argus <gate|init|doctor|test|explain|stats|replay|version>")
+	fmt.Fprintln(os.Stderr, "usage: argus <gate|init|doctor|test|explain|stats|serve|replay|version>")
 }
