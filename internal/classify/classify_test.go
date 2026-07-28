@@ -266,3 +266,43 @@ func TestMCPDestructiveSQLArgsIsMedium(t *testing.T) {
 		t.Fatalf("DROP in MCP args must be medium (downgradable), got %s", got)
 	}
 }
+
+// TestMCPReadSensitivePathIsMedium closes the read-side credential gap: a
+// read-verb MCP tool whose args target a credential/self-protect path asks
+// (medium), symmetric with the Bash credential-read floor. It is downgradable
+// (not a floor) — args are freeform JSON, so this stays a heuristic — and it is
+// AND-gated on BOTH the read verb AND the path, so a non-read tool merely
+// mentioning such a path is not escalated (TestMCPSearchMentioningPathNotFloored).
+func TestMCPReadSensitivePathIsMedium(t *testing.T) {
+	cases := []struct{ name, args string }{
+		{"mcp__fs__read_file", `{"path":"/home/x/.ssh/id_rsa"}`},
+		{"mcp__fs__get_file", `{"path":"/home/x/.aws/credentials"}`},
+		{"mcp__fs__cat", `{"path":"/home/x/.argus/argus.db"}`},
+		{"mcp__fs__download", `{"src":"/home/x/.claude/settings.json"}`},
+	}
+	for _, c := range cases {
+		if got := Classify(mcp(c.name, c.args), policy.Default()).Severity; got != "medium" {
+			t.Fatalf("%s over a sensitive path must be medium, got %s", c.name, got)
+		}
+	}
+}
+
+// TestMCPReadBenignPathIsSafe guards the FP boundary: the same read verbs over
+// an ordinary path stay safe — the rule fires only when the sensitive-path arm
+// also matches.
+func TestMCPReadBenignPathIsSafe(t *testing.T) {
+	for _, n := range []string{"mcp__fs__read_file", "mcp__fs__get_file", "mcp__fs__cat", "mcp__fs__download"} {
+		if got := Classify(mcp(n, `{"path":"/home/x/project/main.go"}`), policy.Default()).Severity; got != "safe" {
+			t.Fatalf("%s over a benign path must be safe, got %s", n, got)
+		}
+	}
+}
+
+// TestMCPMutatingSensitivePathStaysHighFloor pins that adding the read rule did
+// not weaken the floor: a mutating verb over a sensitive path is still high, not
+// downgraded to the new medium.
+func TestMCPMutatingSensitivePathStaysHighFloor(t *testing.T) {
+	if got := Classify(mcp("mcp__fs__delete_file", `{"path":"/home/x/.ssh/id_rsa"}`), policy.Default()).Severity; got != "high" {
+		t.Fatalf("mutating verb over a sensitive path must stay high, got %s", got)
+	}
+}

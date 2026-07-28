@@ -48,11 +48,11 @@ func TestGateMCPEdgeCases(t *testing.T) {
 			`{"tool_name":"mcp__fs__delete_file","permission_mode":"default","tool_input":{"path":"/tmp/x"}}`, "ask"},
 		{"mcp_destructive_sql_medium",
 			`{"tool_name":"mcp__db__query","permission_mode":"default","tool_input":{"sql":"DROP TABLE users"}}`, "ask"},
-		// Honest-limit (documented): a read tool over a credential path is NOT a
-		// floor verb and NOT mutating -> allow. This test PINS that known gap so
-		// a future change to close it is a conscious, reviewed decision.
-		{"mcp_read_ssh_honest_limit_allow",
-			`{"tool_name":"mcp__fs__read_file","permission_mode":"default","tool_input":{"path":"/home/x/.ssh/id_rsa"}}`, "allow"},
+		// A read-verb MCP tool over a credential path asks (medium -> ask): the
+		// mcp-read-sensitive-path rule closes the read-side exfil gap, symmetric
+		// with the Bash credential-read floor. Downgradable, not a floor.
+		{"mcp_read_ssh_asks",
+			`{"tool_name":"mcp__fs__read_file","permission_mode":"default","tool_input":{"path":"/home/x/.ssh/id_rsa"}}`, "ask"},
 		// A non-file-op tool merely mentioning a credential path in freeform args
 		// must NOT be floored (the FP the reviews demanded be avoided).
 		{"mcp_search_mentions_ssh_not_floored",

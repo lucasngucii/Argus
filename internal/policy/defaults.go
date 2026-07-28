@@ -75,6 +75,29 @@ func Default() Policy {
 			// with the Bash db-write rule's severity for the same class of signal.
 			Match:  Match{Raw: `(?i)\b(drop|truncate)\s+(table|database)\b|\bdelete\s+from\b|\.drop\(\)|deletemany`},
 			Reason: "destructive SQL in MCP tool arguments"},
+		{ID: "mcp-read-sensitive-path", Enabled: true, Severity: "medium", Tool: []string{"mcp"},
+			// The read-side counterpart to the mcp-fileop-sensitive-path floor: a
+			// READ-verb MCP tool whose args target a credential/self-protect path.
+			// Bash floors credential *reads* (credential-system-write matches the path
+			// for any verb, cat included) but the MCP floor is AND-gated on a MUTATING
+			// verb, so reading a key over MCP would otherwise slip through — a real
+			// exfil path for a prompt-injected agent. medium (ask), not a floor: like
+			// the SQL-args rule, the path lives in freeform JSON, so it stays
+			// downgradable. AND-gated on BOTH the read verb AND the path, mirroring the
+			// floor, so a non-read tool merely mentioning such a path is not escalated.
+			// The path arm is copied from mcp-fileop-sensitive-path (inlined, not
+			// extracted — the two are the mutating/read halves of one surface).
+			Match: Match{
+				McpTool: `(?i)(^|_)(read|get|fetch|load|open|download|cat|show|view|dump|export|tail|head|print)(_|$)`,
+				Raw: leadBoundary + `\.ssh/(id_[A-Za-z0-9_]+|authorized_keys)\b` +
+					`|` + leadBoundary + `\.ssh` + trailBoundary +
+					`|` + leadBoundary + `\.aws/credentials\b` +
+					`|` + leadBoundary + `\.aws` + trailBoundary +
+					`|` + leadBoundary + `\.argus` + trailBoundary +
+					`|` + leadBoundary + `\.claude/settings(\.local)?\.json\b` +
+					`|` + leadBoundary + `\.claude` + trailBoundary +
+					`|/etc/sudoers\b`},
+			Reason: "MCP read-op targeting a credential/system/self-protect path"},
 	}
 	return p
 }
