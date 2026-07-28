@@ -1,8 +1,8 @@
 {
   "name": "@agrus/argus",
   "version": "0.0.0",
-  "description": "A local-first governance and observability gate for AI coding agents: classify each command by severity and allow/ask/deny it.",
-  "keywords": ["ai", "agent", "claude-code", "security", "guardrail", "permission", "gate", "cli"],
+  "description": "A local-first governance and observability gate for AI coding agents: classify each shell command, file write, and MCP tool call by severity and allow/ask/deny it.",
+  "keywords": ["ai", "agent", "claude-code", "mcp", "security", "guardrail", "permission", "gate", "cli"],
   "bin": { "argus": "bin/argus.js" },
   "files": ["bin/argus.js", "README.md"],
   "optionalDependencies": {

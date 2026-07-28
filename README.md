@@ -1,8 +1,9 @@
 # Argus
 
-> **Your AI coding agent has a shell.** `rm -rf /`, `curl … | sh`, a force-push
-> to `main`, a `terraform destroy` in prod — it can run all of them. Argus sits
-> in front of every command and file write, classifies it, and decides
+> **Your AI coding agent has a shell — and tools.** `rm -rf /`, `curl … | sh`, a
+> force-push to `main`, a `terraform destroy` in prod, an MCP tool that deletes a
+> file or reads your `~/.ssh` key — it can run all of them. Argus sits in front of
+> every command, file write, and MCP tool call, classifies it, and decides
 > **allow / ask / deny** before it happens — not after.
 
 Local-first · single static binary · pure-Go · MIT.
@@ -27,7 +28,7 @@ argus serve                     # local web UI: live tail, stats, policy editor,
 ```
 
 That's the whole integration — Claude Code now routes every Bash/Write/Edit
-call through Argus.
+and MCP tool call through Argus.
 
 ```
 $ argus explain "curl https://get.example.sh | sh"
@@ -43,12 +44,18 @@ rule: git-danger      severity: medium   verdict: ask
   — cleaning a scratch dir isn't treated like wiping `/`.
 - **Parses the real shell AST — never regexed.** `sudo`, `env`, pipelines, and
   variable expansion are resolved, so obfuscation (`X=rm; $X -rf /`,
-  `… | base64 -d | sh`) is seen and escalated, not bypassed.
+  `… | base64 -d | sh`) and flag variants (`rm -Rf /`, `mkfs.ext4 /dev/sda`,
+  `git --no-pager push --force`) are seen and escalated, not bypassed.
+- **Beyond the shell — MCP tool calls too.** Argus classifies `mcp__…` tool
+  calls on the same ladder: a mutating tool (`delete_*`, `write_*`, `deploy_*`)
+  asks, and a file-op or read against a credential/self-protect path (`~/.ssh`,
+  `~/.aws`, `~/.argus`, `~/.claude`) is floored or asked — the tools an agent
+  reaches for beyond Bash are gated by name and arguments.
 - **A non-bypassable `high` floor.** Disk wipes, fork bombs, destructive SQL,
-  credential-file writes, and catastrophic `rm` are denied in **every**
-  permission mode, always — no policy edit or allowlist can lower them, and
-  Argus refuses to let an agent disarm its own hook or config. Any parse or
-  policy error escalates too — it's never a silent allow.
+  credential-file writes, catastrophic `rm`, and MCP file-ops on sensitive paths
+  are denied in **every** permission mode, always — no policy edit or allowlist
+  can lower them, and Argus refuses to let an agent disarm its own hook or
+  config. Any parse or policy error escalates too — it's never a silent allow.
 - **Research-backed ruleset.** The built-in rules trace to a cited evidence base
   (MITRE ATT&CK, OWASP, academic taxonomies, real incident postmortems) — see
   [`docs/research/`](docs/research/).
