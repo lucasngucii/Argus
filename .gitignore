@@ -2,3 +2,4 @@
 /npm/argus-*/bin/
 /dist/
 .nodeterm
+.superpowers/sdd/
