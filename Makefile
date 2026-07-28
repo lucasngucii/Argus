@@ -1,4 +1,5 @@
 export CGO_ENABLED=0
-build: ; go build -o bin/argus ./cmd/argus
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
+build: ; go build -ldflags "-X github.com/lucasngucii/argus/internal/version.version=$(VERSION)" -o bin/argus ./cmd/argus
 test: ; go test ./...
 bench: ; go test -run=x -bench=. ./...
