@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -86,6 +87,8 @@ func main() {
 			os.Exit(1)
 		}
 		os.Exit(cli.Stats(st, os.Stdout, *jsonl))
+	case "replay":
+		os.Exit(runReplay(os.Args[2:]))
 	case "version", "--version", "-v":
 		fmt.Println("argus", version.String())
 	default:
@@ -94,4 +97,61 @@ func main() {
 	}
 }
 
-func usage() { fmt.Fprintln(os.Stderr, "usage: argus <gate|init|doctor|test|explain|stats|version>") }
+// runReplay resolves the candidate policy (a file via --policy, default
+// ~/.argus/policy.json, or a recorded snapshot via --version N) and re-scores
+// the logged history against it. --version reads the exact JSON that was
+// active for that version so a replay lines up with real decisions'
+// policy_version; the file path is the "what would this edit do" case.
+func runReplay(argv []string) int {
+	fs := flag.NewFlagSet("replay", flag.ExitOnError)
+	policyPath := fs.String("policy", "", "candidate policy file (default ~/.argus/policy.json)")
+	ver := fs.Int("version", 0, "re-score against recorded policy version N instead of a file")
+	fs.Parse(argv)
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "argus: user home dir: %v\n", err)
+		return 1
+	}
+	st, err := store.Open(filepath.Join(home, ".argus", "argus.db"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "argus: replay: open store: %v\n", err)
+		return 1
+	}
+	defer st.Close()
+
+	candidate, err := replayCandidate(st, home, *policyPath, *ver)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "argus: replay: %v\n", err)
+		return 1
+	}
+	return cli.Replay(st, candidate, os.Stdout)
+}
+
+// replayCandidate returns the policy to re-score against: a recorded snapshot
+// when ver > 0 (validated then decoded so a corrupt snapshot fails loudly), or
+// the policy file otherwise (path, or ~/.argus/policy.json by default).
+func replayCandidate(st *store.Store, home, policyPath string, ver int) (policy.Policy, error) {
+	if ver > 0 {
+		raw, err := st.PolicyVersionJSON(ver)
+		if err != nil {
+			return policy.Policy{}, fmt.Errorf("policy version %d: %w", ver, err)
+		}
+		if err := policy.Validate([]byte(raw)); err != nil {
+			return policy.Policy{}, fmt.Errorf("policy version %d: %w", ver, err)
+		}
+		var p policy.Policy
+		if err := json.Unmarshal([]byte(raw), &p); err != nil {
+			return policy.Policy{}, fmt.Errorf("policy version %d: decode: %w", ver, err)
+		}
+		return p, nil
+	}
+	if policyPath == "" {
+		policyPath = filepath.Join(home, ".argus", "policy.json")
+	}
+	return policy.Load(policyPath)
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, "usage: argus <gate|init|doctor|test|explain|stats|replay|version>")
+}
