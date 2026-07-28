@@ -31,10 +31,11 @@ const shutdownGrace = 5 * time.Second
 // read. shutdown is closed once, in ListenAndServe, to signal per-connection
 // SSE loops to stop so an open stream can never block shutdown.
 type Server struct {
-	store      *store.Store
-	policyPath string
-	addr       string
-	shutdown   chan struct{}
+	store       *store.Store
+	policyPath  string
+	addr        string
+	shutdown    chan struct{}
+	sseInterval time.Duration
 }
 
 // New validates addr down to a loopback bind and returns a Server. It refuses
@@ -48,10 +49,11 @@ func New(s *store.Store, policyPath, addr string) (*Server, error) {
 		return nil, err
 	}
 	return &Server{
-		store:      s,
-		policyPath: policyPath,
-		addr:       norm,
-		shutdown:   make(chan struct{}),
+		store:       s,
+		policyPath:  policyPath,
+		addr:        norm,
+		shutdown:    make(chan struct{}),
+		sseInterval: time.Second,
 	}, nil
 }
 
@@ -103,6 +105,8 @@ func (srv *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
 	mux.HandleFunc("/api/stats", srv.handleStats)
+	mux.HandleFunc("/api/decisions", srv.handleDecisions)
+	mux.HandleFunc("/api/stream", srv.handleStream)
 	mux.HandleFunc("/api/", notFoundJSON)
 	mux.HandleFunc("/", srv.serveIndex)
 	return hostGuard(csrfGuard(limitBody(mux)))

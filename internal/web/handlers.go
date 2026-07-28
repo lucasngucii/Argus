@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/lucasngucii/argus/internal/store"
 )
@@ -58,6 +59,65 @@ func (srv *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		Sessions: sessions,
 		Recent:   recent,
 	})
+}
+
+// decisionsResponse is the GET /api/decisions payload: one page of rows
+// (newest-first) plus the id to pass as ?before= for the next older page.
+// NextBefore is 0 when the page is empty (no more to fetch).
+type decisionsResponse struct {
+	Rows       []store.Row `json:"rows"`
+	NextBefore int         `json:"nextBefore"`
+}
+
+// handleDecisions answers GET /api/decisions?severity=&limit=&before= by
+// paging the store newest-first. limit is clamped to [1,200] (default 50) so a
+// client can't request an unbounded scan; an empty severity means all
+// severities; before<=0 starts at the newest row. NextBefore carries the
+// oldest returned id so the client can request the next page without the
+// server holding cursor state.
+func (srv *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	q := r.URL.Query()
+	limit := clampInt(atoiOr(q.Get("limit"), 50), 1, 200)
+	before := atoiOr(q.Get("before"), 0)
+
+	rows, err := srv.store.Page(q.Get("severity"), limit, before)
+	if err != nil {
+		serverError(w, "decisions", err)
+		return
+	}
+	next := 0
+	if len(rows) > 0 {
+		next = rows[len(rows)-1].ID
+	}
+	if rows == nil {
+		rows = []store.Row{}
+	}
+	writeJSON(w, http.StatusOK, decisionsResponse{Rows: rows, NextBefore: next})
+}
+
+// atoiOr parses s as an int, returning def when s is empty or malformed — the
+// tolerant parse a query parameter wants (a bad ?limit= falls back to the
+// default rather than erroring the request).
+func atoiOr(s string, def int) int {
+	if n, err := strconv.Atoi(s); err == nil {
+		return n
+	}
+	return def
+}
+
+// clampInt bounds n to [lo, hi].
+func clampInt(n, lo, hi int) int {
+	if n < lo {
+		return lo
+	}
+	if n > hi {
+		return hi
+	}
+	return n
 }
 
 // writeJSON encodes v as the response body with the given status. A late
