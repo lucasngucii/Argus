@@ -133,3 +133,15 @@ func TestRescoreNilRowsEmptyResult(t *testing.T) {
 		t.Fatal("Summary must be non-nil even when empty")
 	}
 }
+
+// TestRescoreMCPRowUsesArgs: An MCP row whose Command holds the args JSON must re-score with a policy that
+// gates that MCP tool — proving replay reconstructs the MCP subject (a mutating
+// tool name → medium under Default()).
+func TestRescoreMCPRowUsesArgs(t *testing.T) {
+	rows := []store.Row{{Tool: "mcp__filesystem__delete_file", Command: `{"path":"/tmp/x"}`,
+		Severity: "safe", Verdict: "allow", PermissionMode: "default"}}
+	res := Rescore(rows, false, policy.Default())
+	if len(res.Changed) != 1 || res.Changed[0].NewSeverity != "medium" {
+		t.Fatalf("MCP row must re-score medium (mutating tool), got %+v", res.Changed)
+	}
+}
