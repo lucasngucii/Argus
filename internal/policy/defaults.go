@@ -51,6 +51,13 @@ func Default() Policy {
 			// "admin") so a user NAMED admin doesn't false-positive.
 			Match:  Match{Cmd: []string{"useradd", "usermod", "adduser"}, ArgsContain: []string{"sudo", "wheel"}},
 			Reason: "privileged account creation/elevation (persistence)"},
+		{ID: "pkg-install-lifecycle", Enabled: true, Severity: "medium", Tool: []string{"Bash"},
+			// npm install/i/ci/update runs code via lifecycle hooks (supply-chain RCE
+			// vector; Microsoft Mastra, Trend Micro Axios). Anchored so `npm i` matches
+			// and `npm run ci` does not. RE2 has no lookahead, so `--ignore-scripts`
+			// (the safe form) still asks — allowlist it if you want it silent.
+			Match:  Match{Cmd: []string{"npm"}, ArgMatches: `^(install|i|ci|update)\b`},
+			Reason: "npm install runs code via lifecycle hooks (supply-chain); --ignore-scripts still asks"},
 	}
 	return p
 }

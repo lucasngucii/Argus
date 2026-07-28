@@ -162,3 +162,22 @@ func TestAllowlistCannotDowngradeCatastrophicRm(t *testing.T) {
 		t.Fatalf("allowlist must still downgrade ordinary rm (got %s, want safe)", got)
 	}
 }
+
+// pkg-install-lifecycle: npm install/i/ci/update can run arbitrary code via
+// lifecycle hooks "regardless of whether the package was imported" (Microsoft
+// Mastra, Trend Micro Axios). medium/ask. Anchored argMatches catches `npm i`
+// and excludes `npm run ci`.
+func TestNpmInstallIsMedium(t *testing.T) {
+	for _, c := range []string{"npm install lodash", "npm i lodash", "npm ci", "npm update"} {
+		if sev(c, "/tmp") != "medium" {
+			t.Fatalf("%q must be medium, got %s", c, sev(c, "/tmp"))
+		}
+	}
+}
+func TestNpmRunNotFlagged(t *testing.T) {
+	for _, c := range []string{"npm run build", "npm run ci", "npm run update"} {
+		if sev(c, "/tmp") != "safe" {
+			t.Fatalf("%q must be safe, got %s", c, sev(c, "/tmp"))
+		}
+	}
+}
