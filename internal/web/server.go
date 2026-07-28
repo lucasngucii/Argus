@@ -102,6 +102,7 @@ func isLoopbackHost(host string) bool {
 func (srv *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
+	mux.HandleFunc("/api/stats", srv.handleStats)
 	mux.HandleFunc("/api/", notFoundJSON)
 	mux.HandleFunc("/", srv.serveIndex)
 	return hostGuard(csrfGuard(limitBody(mux)))
