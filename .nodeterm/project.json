@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "rev": 54,
+  "savedAt": "2026-07-28T03:52:53.104Z",
+  "id": "project-ms3zil1k-1",
+  "name": "argus",
+  "color": "#ffd60a",
+  "viewport": {
+    "x": -261.83701765540195,
+    "y": 109.47115023161646,
+    "zoom": 1.064116985376828
+  },
+  "nodes": [
+    {
+      "id": "term-ms3zip5z-2",
+      "kind": "terminal",
+      "position": {
+        "x": 463.01227134846954,
+        "y": -171.06013162947613
+      },
+      "size": {
+        "width": 1330,
+        "height": 889
+      },
+      "title": "Terminal 1",
+      "titleAuto": true,
+      "color": "#0a84ff",
+      "group": null,
+      "tags": [],
+      "collapsed": false,
+      "cwd": "."
+    },
+    {
+      "id": "term-ms42gkc9-6",
+      "kind": "terminal",
+      "position": {
+        "x": 1827.0902734141607,
+        "y": 181.86789742431304
+      },
+      "size": {
+        "width": 600,
+        "height": 400
+      },
+      "title": "Terminal 2",
+      "titleAuto": true,
+      "color": "#32d74b",
+      "group": null,
+      "tags": [],
+      "collapsed": false,
+      "cwd": "."
+    }
+  ],
+  "bridges": [],
+  "ropes": []
+}

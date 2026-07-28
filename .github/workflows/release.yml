@@ -30,11 +30,11 @@ jobs:
       - name: Publish platform packages
         run: |
           for s in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
-            npm publish "npm/argus-$s" --access public
+            npm publish "./npm/argus-$s" --access public
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish main package
-        run: npm publish npm/argus --access public
+        run: npm publish ./npm/argus --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
