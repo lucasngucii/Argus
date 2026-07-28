@@ -7,9 +7,11 @@ Argus sits in front of every shell command and file write an AI coding agent
 **allow / ask / deny** — then records every decision to a local database so you
 can see, explain, and tune what your agents are doing.
 
-> Status: **v0.1 — alpha.** The classification engine, the Claude Code gate, and
-> the CLI are implemented and verified end-to-end. The web control-plane
-> (`serve` / replay UI) is on the [roadmap](#roadmap).
+> Status: **v0.1 — alpha.** The classification engine, the Claude Code gate, the
+> CLI, the **web control-plane** (`argus serve` — live tail, stats, explain,
+> policy editor, replay simulator), and the **`npm` installer** are implemented
+> and verified end-to-end. Gating MCP tool calls and multi-harness support
+> (Codex, Gemini) are on the [roadmap](#roadmap).
 
 License: MIT · Go 1.26 · pure-Go (`CGO_ENABLED=0`), single static binary.
 
@@ -59,7 +61,7 @@ Argus is built the other way around.
 Argus installs as a **PreToolUse hook** in Claude Code. Before a tool call runs,
 Claude Code pipes it to `argus gate`, which classifies it and returns a verdict.
 The gate is a short-lived, synchronous, fail-closed process (~0.1 ms/call);
-a separate management layer (CLI today, web UI on the roadmap) reads the DB.
+a separate management layer (the CLI and the `argus serve` web UI) reads the DB.
 
 ```
   hot path (fast, fail-closed)                 management (read-mostly)
@@ -108,6 +110,7 @@ argus explain "sudo rm -rf /"     # dry-run: severity, firing rule, verdict, AST
 argus stats                       # decision digest (counts, denies, recent high/medium)
 argus stats --jsonl               # stream all decisions as JSONL
 argus test testdata/evasion.jsonl # run a rule corpus (command → expected severity)
+argus serve                       # open the local web control-plane (loopback only)
 ```
 
 ### Commands
@@ -120,8 +123,26 @@ argus test testdata/evasion.jsonl # run a rule corpus (command → expected seve
 | `argus explain <cmd>` | Dry-run one command and show *why* it classifies as it does. |
 | `argus stats [--jsonl]` | Decision aggregates / JSONL export. |
 | `argus test <corpus…>` | Assert a `{command → expected severity}` corpus (CI-friendly). |
+| `argus serve [--addr]` | Serve the local web control-plane (loopback-only; default `127.0.0.1:4600`). |
+| `argus replay [--policy F \| --version N]` | Re-score the logged history against a candidate policy and print what would change. |
 | `argus version` | Print the version. |
-| `argus serve` / `argus replay` | **Roadmap** — web control-plane + policy replay. |
+
+## Web control-plane
+
+`argus serve` starts a **loopback-only** web app (default `127.0.0.1:4600`) — a
+no-build static frontend over a JSON+SSE API, embedded in the binary. It is
+authenticated purely by being unreachable off-host, and defends the two
+browser-reachable vectors explicitly (a Host-header allowlist against
+DNS-rebinding, and CSRF on every mutating route).
+
+| Tab | What it does |
+|---|---|
+| **Live** | Real-time decision tail over Server-Sent Events, colored by severity. |
+| **Stats** | Severity breakdown (inline-SVG chart) + deny / distinct-session tiles. |
+| **Explain** | Dry-run a hypothetical `command`/`tool`/`mode`/`file` → severity, verdict, rule, AST facts. |
+| **Policy** | Edit `policy.json` with **validate-before-save** (a bad edit is rejected, the file untouched); browse recorded versions. |
+| **Replay** | Simulate a candidate policy over your history — *"3 decisions scored, 1 changed: `git push --force` ask → allow"*. |
+| **Close-the-loop** | An **Allow** control on any decision row writes a scoped allow-list rule — the always-high floor still can't be downgraded. |
 
 ## Policy
 
@@ -146,12 +167,29 @@ built-in scorers.
 }
 ```
 
+Within a rule's `match`, every non-empty field must hold (logical **AND**):
+
+| Field | Matches |
+|---|---|
+| `cmd` | command name(s), resolved through wrappers (`sudo rm` → `rm`) |
+| `flags` | single-letter flags that must **all** be present (`["r","f"]`) |
+| `argsContain` | **any** of these appears in the resolved args |
+| `argMatches` | regex over the joined args |
+| `pipesInto` | a pipe sink (`["sh","bash"]`) |
+| `redirectsTo` | an exact redirect target |
+| `raw` | regex over the whole command string (escape hatch) |
+| `targetScorer` | a built-in scorer — `rm_target` or `git_danger` |
+
 - A rule's `severity` maps to a verdict: `safe`/`low` → allow, `medium` → ask
   (deny in non-interactive modes), `high` → deny.
-- `allow: true` rules **down**-grade a match — but they can never downgrade a
-  `high`/floor command.
+- `alwaysHigh: true` adds your own non-downgradable rule; `allow: true` rules
+  **down**-grade a match — but neither an allow rule nor any policy edit can
+  downgrade a `high`/floor command.
 - The always-high **floor** (catastrophes + self-protection) is enforced by the
-  engine and survives even an empty or hand-edited policy.
+  engine, lives outside `policy.json`, and survives even an empty or hand-edited
+  policy — so a custom policy can only ever tighten, never weaken it.
+- Edits take effect immediately (the gate loads the policy per call); the web
+  **Policy** tab validates before writing and snapshots each version.
 
 ## Trust model, honestly
 
@@ -167,12 +205,11 @@ the evasion corpus exists exactly to close them.
 
 Argus is built in stages (design + plans live in [`docs/`](docs/)):
 
-- **Plan 1 — engine + gate + CLI** ✅ *(this release)*
-- **Plan 2 — web control-plane:** `argus serve` (localhost) with live decision
-  tail, stats, an explain view, a policy editor, and the **replay simulator**
-  (re-score your history against a candidate policy: *"this change flips 4
-  decisions and newly catches 1"*).
-- **Plan 3 — distribution:** `npm` install with prebuilt per-platform binaries.
+- **Plan 1 — engine + gate + CLI** ✅
+- **Plan 2 — web control-plane** ✅ — `argus serve` with live tail, stats, an
+  explain view, a policy editor, and the replay simulator + close-the-loop.
+- **Plan 3 — distribution** ✅ — one-line `npm` install with prebuilt
+  per-platform binaries + tagged GitHub Releases.
 - **Plan 4 — reach:** gate **MCP tool calls**, and multi-harness support beyond
   Claude Code (Codex, Gemini).
 
