@@ -67,6 +67,10 @@ Policy is a JSON file (`~/.argus/policy.json`), schema-validated. Add your own:
 to whitelist a command — but nothing can downgrade the `high` floor. Edits apply
 immediately, or edit + validate in the web **Policy** tab.
 
+Beyond the built-in rules (grounded in the research at
+[`docs/research/`](docs/research/)), see [`docs/policy-packs/`](docs/policy-packs/)
+for optional rule sets (e.g. an infra teardown guard) you can merge in.
+
 ## Web UI
 
 `argus serve` opens a loopback-only app at `127.0.0.1:4600`: live decision tail,
