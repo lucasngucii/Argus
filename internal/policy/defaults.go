@@ -45,6 +45,12 @@ func Default() Policy {
 			// so it must stay downgradable, not a non-recoverable floor.
 			Match:  Match{Raw: `(?i)\b(grep|rg|ag)\b[^|]*(key|token|secret|credential|password)[^|]*\|\s*(curl|wget|nc|ncat)\b`},
 			Reason: "credential search piped to network exfiltration"},
+		{ID: "useradd-privileged", Enabled: true, Severity: "medium", Tool: []string{"Bash"},
+			// Creating/elevating a privileged account (sudo/wheel group) is a documented
+			// persistence step (arXiv:2509.22040). Exact-token argsContain (not a regex on
+			// "admin") so a user NAMED admin doesn't false-positive.
+			Match:  Match{Cmd: []string{"useradd", "usermod", "adduser"}, ArgsContain: []string{"sudo", "wheel"}},
+			Reason: "privileged account creation/elevation (persistence)"},
 	}
 	return p
 }

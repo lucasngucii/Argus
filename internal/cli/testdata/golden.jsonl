@@ -7,3 +7,4 @@
 {"tool":"Bash","command":"sh -c \"echo hi\"","expect":"medium"}
 {"tool":"Bash","command":"bash --version","expect":"safe"}
 {"tool":"Bash","command":"grep -r TODO ./src","expect":"safe"}
+{"tool":"Bash","command":"useradd -m -s /bin/bash admin","expect":"safe"}

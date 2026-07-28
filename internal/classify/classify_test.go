@@ -87,6 +87,35 @@ func TestGrepBenignNotExfil(t *testing.T) {
 	}
 }
 
+// useradd-privileged: creating/elevating a privileged account (sudo/wheel group)
+// is a documented persistence step (arXiv:2509.22040). medium/ask — legitimate
+// in provisioning, so downgradable. Exact-token match avoids firing on a user
+// literally named "admin".
+func TestUseraddPrivilegedIsMedium(t *testing.T) {
+	if sev("useradd -G sudo attacker", "/tmp") != "medium" {
+		t.Fatalf("useradd into sudo group must be medium, got %s", sev("useradd -G sudo attacker", "/tmp"))
+	}
+	if sev("usermod -aG wheel bob", "/tmp") != "medium" {
+		t.Fatal("usermod into wheel must be medium")
+	}
+	if sev("adduser bob sudo", "/tmp") != "medium" {
+		t.Fatal("adduser bob sudo must be medium")
+	}
+}
+func TestUseraddPrivilegedEvasionStaysCaught(t *testing.T) {
+	if sev("sudo useradd -G sudo evil", "/tmp") != "medium" {
+		t.Fatal("sudo-wrapped useradd must unwrap and stay medium")
+	}
+}
+func TestPlainUseraddAndNamedAdminNotFlagged(t *testing.T) {
+	if s := sev("useradd bob", "/tmp"); s == "medium" {
+		t.Fatalf("plain useradd must not fire this rule, got %s", s)
+	}
+	if s := sev("useradd -m -s /bin/bash admin", "/tmp"); s == "medium" {
+		t.Fatalf("a user NAMED admin (no sudo/wheel group) must not fire, got %s", s)
+	}
+}
+
 // minimalPol is a valid but rule-less policy — NOT Default(). It is the crux
 // of the FINAL-REVIEW Critical: catastrophic recursive-rm must still floor to
 // high with no rules present, because the floor is an engine invariant that
