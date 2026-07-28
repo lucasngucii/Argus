@@ -1,6 +1,7 @@
 package classify
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/lucasngucii/argus/internal/hook"
@@ -12,6 +13,9 @@ func bash(cmd, mode, cwd string) hook.Payload {
 }
 func sev(cmd, cwd string) string {
 	return Classify(bash(cmd, "default", cwd), policy.Default()).Severity
+}
+func mcp(name, argsJSON string) hook.Payload {
+	return hook.Payload{ToolName: name, PermissionMode: "default", ToolInput: hook.ToolInput{Raw: json.RawMessage(argsJSON)}}
 }
 
 func TestSudoRmIsHigh(t *testing.T) {
@@ -198,5 +202,20 @@ func TestRcFileReadNotFlagged(t *testing.T) {
 		if sev(c, "/tmp") != "safe" {
 			t.Fatalf("%q must be safe (reading rc, not writing), got %s", c, sev(c, "/tmp"))
 		}
+	}
+}
+
+func TestMCPToolTokenAndFieldMatch(t *testing.T) {
+	pol := policy.Policy{Version: 1, Rules: []policy.Rule{
+		{ID: "gh-del", Enabled: true, Severity: "high", AlwaysHigh: true, Tool: []string{"mcp"},
+			Match: policy.Match{McpServer: []string{"github"}, McpTool: "(?i)(^|_)delete(_|$)"}, Reason: "x"}}}
+	if Classify(mcp("mcp__github__delete_repo", `{}`), pol).Severity != "high" {
+		t.Fatal("github delete must match")
+	}
+	if Classify(mcp("mcp__memory__delete_x", `{}`), pol).Severity == "high" {
+		t.Fatal("other server must not match")
+	}
+	if Classify(bash("delete stuff", "default", "/tmp"), pol).Severity == "high" {
+		t.Fatal("mcp rule must not fire on Bash")
 	}
 }

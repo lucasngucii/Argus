@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/lucasngucii/argus/internal/hook"
 	"github.com/lucasngucii/argus/internal/policy"
 	"github.com/lucasngucii/argus/internal/shellast"
 )
@@ -61,6 +62,25 @@ func Matches(tool, subject string, f shellast.Facts, r policy.Rule) (matched boo
 			matched = false
 		}
 	}
+	if len(mt.McpServer) > 0 || mt.McpTool != "" {
+		server, mtool, isMCP := hook.SplitMCP(tool)
+		if !isMCP {
+			matched = false
+		} else {
+			if len(mt.McpServer) > 0 && !contains(mt.McpServer, server) {
+				matched = false
+			}
+			if mt.McpTool != "" {
+				re, err := regexp.Compile(mt.McpTool)
+				if err != nil {
+					return false, true
+				}
+				if !re.MatchString(mtool) {
+					matched = false
+				}
+			}
+		}
+	}
 	return matched, false
 }
 
@@ -74,8 +94,9 @@ func usesShellFacts(mt policy.Match) bool {
 
 // toolIn reports whether tool is present in tools.
 func toolIn(tools []string, tool string) bool {
+	isMCP := strings.HasPrefix(tool, "mcp__")
 	for _, t := range tools {
-		if t == tool {
+		if t == tool || (t == "mcp" && isMCP) {
 			return true
 		}
 	}
