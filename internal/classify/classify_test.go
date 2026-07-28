@@ -245,3 +245,24 @@ func TestMCPFloorNotDowngradable(t *testing.T) {
 		t.Fatal("allowlist must not downgrade the MCP floor")
 	}
 }
+
+func TestMCPMutatingToolIsMedium(t *testing.T) {
+	for _, n := range []string{"mcp__fs__delete_file", "mcp__db__drop_table", "mcp__x__exec_command",
+		"mcp__fs__write_file", "mcp__slack__send_message", "mcp__ci__deploy", "mcp__iam__grant_role", "mcp__gh__merge_pull_request"} {
+		if got := Classify(mcp(n, `{"a":"b"}`), policy.Default()).Severity; got != "medium" {
+			t.Fatalf("%s must be medium, got %s", n, got)
+		}
+	}
+}
+func TestMCPReadToolIsSafe(t *testing.T) {
+	for _, n := range []string{"mcp__fs__read_file", "mcp__gh__list_issues", "mcp__x__get_status", "mcp__x__search", "mcp__fs__list_updates"} {
+		if got := Classify(mcp(n, `{"a":"b"}`), policy.Default()).Severity; got != "safe" {
+			t.Fatalf("%s must be safe, got %s", n, got)
+		}
+	}
+}
+func TestMCPDestructiveSQLArgsIsMedium(t *testing.T) {
+	if got := Classify(mcp("mcp__db__query", `{"sql":"DROP TABLE users"}`), policy.Default()).Severity; got != "medium" {
+		t.Fatalf("DROP in MCP args must be medium (downgradable), got %s", got)
+	}
+}

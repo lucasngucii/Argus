@@ -64,6 +64,17 @@ func Default() Policy {
 			// dotfile does not fire. medium/ask — editing dotfiles can be legitimate.
 			Match:  Match{Raw: `>>?\s*\S*\.(bash|zsh)rc\b`},
 			Reason: "shell redirect into a shell rc file (persistence)"},
+		{ID: "mcp-mutating-tool", Enabled: true, Severity: "medium", Tool: []string{"mcp"},
+			// No shell AST for MCP — the tool name is the only intent signal. Snake_case
+			// is the norm, so verbs are anchored on _ / start / end (\b does NOT split _).
+			Match:  Match{McpTool: `(?i)(^|_)(delete|drop|remove|destroy|truncate|write|create|update|put|patch|exec|run|kill|send|publish|revoke|deploy|merge|apply|grant|transfer)(_|$)`},
+			Reason: "MCP tool with a mutating action — review before running"},
+		{ID: "mcp-destructive-sql-args", Enabled: true, Severity: "medium", Tool: []string{"mcp"},
+			// Destructive SQL in MCP arguments. medium (ask), not a floor: args are
+			// freeform JSON, so this keyword heuristic must stay downgradable — consistent
+			// with the Bash db-write rule's severity for the same class of signal.
+			Match:  Match{Raw: `(?i)\b(drop|truncate)\s+(table|database)\b|\bdelete\s+from\b|\.drop\(\)|deletemany`},
+			Reason: "destructive SQL in MCP tool arguments"},
 	}
 	return p
 }
