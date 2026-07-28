@@ -80,28 +80,38 @@ func (srv *Server) putPolicy(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "invalid policy", err)
 		return
 	}
-
-	next, err := srv.nextVersion()
+	next, err := srv.persistPolicy(body, r.URL.Query().Get("note"))
 	if err != nil {
-		serverError(w, "next version", err)
-		return
-	}
-	stamped, err := stampVersion(body, next)
-	if err != nil {
-		serverError(w, "stamp version", err)
-		return
-	}
-	if err := os.WriteFile(srv.policyPath, stamped, 0o644); err != nil {
-		serverError(w, "write policy", err)
-		return
-	}
-	sum := sha256.Sum256(stamped)
-	note := r.URL.Query().Get("note")
-	if err := srv.store.InsertPolicyVersion(next, "web", note, string(stamped), hex.EncodeToString(sum[:])); err != nil {
-		serverError(w, "record snapshot", err)
+		serverError(w, "persist policy", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"version": next})
+}
+
+// persistPolicy stamps an already-validated policy document to maxVersion+1,
+// writes it to policy.json, and records a matching snapshot under that same
+// number, returning the new version. It is the shared write path behind PUT
+// /api/policy and POST /api/allowlist — the single place the version/audit
+// invariant (document version == snapshot version) is enforced. Callers MUST
+// policy.Validate the body first (400 on invalid, file untouched); this
+// assumes validity.
+func (srv *Server) persistPolicy(body []byte, note string) (int, error) {
+	next, err := srv.nextVersion()
+	if err != nil {
+		return 0, err
+	}
+	stamped, err := stampVersion(body, next)
+	if err != nil {
+		return 0, err
+	}
+	if err := os.WriteFile(srv.policyPath, stamped, 0o644); err != nil {
+		return 0, err
+	}
+	sum := sha256.Sum256(stamped)
+	if err := srv.store.InsertPolicyVersion(next, "web", note, string(stamped), hex.EncodeToString(sum[:])); err != nil {
+		return 0, err
+	}
+	return next, nil
 }
 
 // getPolicyVersion serves GET /api/policy/versions/{v} — the recorded snapshot
