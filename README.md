@@ -79,17 +79,18 @@ side-effects wrapped around it; a logging/DB failure can never change a verdict.
 
 ## Install
 
-Requires Go 1.26+.
-
 ```bash
-# from source
-git clone git@github.com:lucasngucii/Argus.git && cd Argus
-CGO_ENABLED=0 go build -o bin/argus ./cmd/argus
-# or
+# prebuilt binary via npm (no Go toolchain needed)
+npm install -g @lucasngucii/argus
+
+# or download a release archive:
+#   https://github.com/lucasngucii/Argus/releases
+# or build from source (Go 1.26+):
 go install github.com/lucasngucii/argus/cmd/argus@latest
 ```
 
-(An `npm` one-line installer with prebuilt binaries is planned — see roadmap.)
+Supported prebuilt platforms: macOS and Linux (arm64 + x64). On any other
+platform, `npm` prints a pointer to the release archives / `go install`.
 
 ## Quick start
 

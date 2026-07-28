@@ -1,0 +1,19 @@
+{
+  "name": "@lucasngucii/argus-linux-x64",
+  "version": "0.0.0",
+  "description": "Argus prebuilt binary for linux-x64.",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lucasngucii/Argus.git"
+  }
+}
