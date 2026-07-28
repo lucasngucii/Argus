@@ -1,5 +1,5 @@
 {
-  "name": "@lucasngucii/argus-darwin-x64",
+  "name": "@agrus/argus-darwin-x64",
   "version": "0.0.0",
   "description": "Argus prebuilt binary for darwin-x64.",
   "os": [

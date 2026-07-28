@@ -13,7 +13,7 @@ test("launcher execs the resolved platform binary and passes args", () => {
   const root = path.resolve(import.meta.dirname, "..");
   const suffix = `${process.platform}-${process.arch}`;
   const work = mkdtempSync(path.join(tmpdir(), "argus-launcher-"));
-  const scope = path.join(work, "node_modules", "@lucasngucii");
+  const scope = path.join(work, "node_modules", "@agrus");
 
   // launcher package (sibling)
   const mainBin = path.join(scope, "argus", "bin");
@@ -21,7 +21,7 @@ test("launcher execs the resolved platform binary and passes args", () => {
   copyFileSync(path.join(root, "npm/argus/bin/argus.js"), path.join(mainBin, "argus.js"));
   writeFileSync(
     path.join(scope, "argus", "package.json"),
-    JSON.stringify({ name: "@lucasngucii/argus", version: "0.0.0" }),
+    JSON.stringify({ name: "@agrus/argus", version: "0.0.0" }),
   );
 
   // matching platform package with the real host binary
@@ -33,7 +33,7 @@ test("launcher execs the resolved platform binary and passes args", () => {
   });
   writeFileSync(
     path.join(scope, `argus-${suffix}`, "package.json"),
-    JSON.stringify({ name: `@lucasngucii/argus-${suffix}`, version: "0.0.0" }),
+    JSON.stringify({ name: `@agrus/argus-${suffix}`, version: "0.0.0" }),
   );
 
   const out = execFileSync("node", [path.join(mainBin, "argus.js"), "version"]).toString();
