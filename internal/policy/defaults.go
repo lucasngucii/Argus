@@ -58,6 +58,12 @@ func Default() Policy {
 			// (the safe form) still asks — allowlist it if you want it silent.
 			Match:  Match{Cmd: []string{"npm"}, ArgMatches: `^(install|i|ci|update)\b`},
 			Reason: "npm install runs code via lifecycle hooks (supply-chain); --ignore-scripts still asks"},
+		{ID: "rc-file-inject", Enabled: true, Severity: "medium", Tool: []string{"Bash"},
+			// A shell redirect into ~/.bashrc/~/.zshrc is a documented persistence
+			// technique (arXiv:2509.22040). Matches the redirect shape only, so reading a
+			// dotfile does not fire. medium/ask — editing dotfiles can be legitimate.
+			Match:  Match{Raw: `>>?\s*\S*\.(bash|zsh)rc\b`},
+			Reason: "shell redirect into a shell rc file (persistence)"},
 	}
 	return p
 }

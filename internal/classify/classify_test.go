@@ -181,3 +181,22 @@ func TestNpmRunNotFlagged(t *testing.T) {
 		}
 	}
 }
+
+// rc-file-inject: appending to ~/.bashrc/~/.zshrc is a documented persistence
+// technique (arXiv:2509.22040). medium/ask. Matches a redirect into rc only, so
+// reading (`cat ~/.bashrc`, `source`) does not fire.
+func TestRcFileInjectIsMedium(t *testing.T) {
+	if sev("echo 'evil' >> ~/.bashrc", "/tmp") != "medium" {
+		t.Fatalf("append to .bashrc must be medium, got %s", sev("echo 'evil' >> ~/.bashrc", "/tmp"))
+	}
+	if sev("printf 'x' > /home/dev/.zshrc", "/tmp") != "medium" {
+		t.Fatal("overwrite .zshrc must be medium")
+	}
+}
+func TestRcFileReadNotFlagged(t *testing.T) {
+	for _, c := range []string{"cat ~/.bashrc", "source ~/.bashrc"} {
+		if sev(c, "/tmp") != "safe" {
+			t.Fatalf("%q must be safe (reading rc, not writing), got %s", c, sev(c, "/tmp"))
+		}
+	}
+}
