@@ -93,17 +93,18 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// Handler builds the request multiplexer. Task 6 wraps this in the security
-// middleware chain (Host-allowlist -> CSRF -> body-limit); the concrete /api
-// handlers register in Tasks 7-11. For now: GET / serves the embedded shell,
+// Handler builds the request multiplexer wrapped in the security middleware
+// chain: hostGuard (anti DNS-rebinding) -> csrfGuard (mutating routes) ->
+// limitBody (1 MB cap) -> mux. Routes: GET / serves the embedded shell,
 // /static/* serves embedded assets, and any unmatched /api/* returns a JSON
 // 404 (so an unknown endpoint is a structured error, not the HTML shell).
+// Concrete /api handlers register in Tasks 7-11.
 func (srv *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
 	mux.HandleFunc("/api/", notFoundJSON)
 	mux.HandleFunc("/", srv.serveIndex)
-	return mux
+	return hostGuard(csrfGuard(limitBody(mux)))
 }
 
 // serveIndex writes the embedded index.html shell. A read failure here means

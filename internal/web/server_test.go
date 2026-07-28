@@ -67,8 +67,11 @@ func TestHandler_ServesIndexAnd404(t *testing.T) {
 	}
 	h := srv.Handler()
 
+	// Requests go through the hostGuard chain, so use a loopback Host.
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "127.0.0.1:4600"
+	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET / = %d, want 200", rec.Code)
 	}
@@ -77,7 +80,9 @@ func TestHandler_ServesIndexAnd404(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/nope", nil))
+	req = httptest.NewRequest(http.MethodGet, "/api/nope", nil)
+	req.Host = "127.0.0.1:4600"
+	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("GET /api/nope = %d, want 404", rec.Code)
 	}
