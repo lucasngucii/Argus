@@ -81,7 +81,7 @@ side-effects wrapped around it; a logging/DB failure can never change a verdict.
 
 ```bash
 # prebuilt binary via npm (no Go toolchain needed)
-npm install -g @lucasngucii/argus
+npm install -g @agrus/argus
 
 # or download a release archive:
 #   https://github.com/lucasngucii/Argus/releases

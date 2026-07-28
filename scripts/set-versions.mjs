@@ -23,7 +23,7 @@ const write = (rel, mutate) => {
 
 write("npm/argus/package.json", (j) => {
   j.version = version;
-  for (const s of suffixes) j.optionalDependencies[`@lucasngucii/argus-${s}`] = version;
+  for (const s of suffixes) j.optionalDependencies[`@agrus/argus-${s}`] = version;
 });
 for (const s of suffixes) write(`npm/argus-${s}/package.json`, (j) => (j.version = version));
 console.log(`set version ${version} across ${suffixes.length + 1} packages`);

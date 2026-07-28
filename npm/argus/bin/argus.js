@@ -7,7 +7,7 @@
 const { execFileSync } = require("child_process");
 
 function resolveBinary() {
-  const pkg = `@lucasngucii/argus-${process.platform}-${process.arch}`;
+  const pkg = `@agrus/argus-${process.platform}-${process.arch}`;
   const file = process.platform === "win32" ? "argus.exe" : "argus";
   try {
     return require.resolve(`${pkg}/bin/${file}`);

@@ -1,5 +1,5 @@
 {
-  "name": "@lucasngucii/argus-linux-arm64",
+  "name": "@agrus/argus-linux-arm64",
   "version": "0.0.0",
   "description": "Argus prebuilt binary for linux-arm64.",
   "os": [
