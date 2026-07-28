@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/lucasngucii/argus/internal/store"
@@ -33,7 +34,13 @@ func Serve(ctx context.Context, home, addr string, w io.Writer) int {
 		return 1
 	}
 
+	// The serving process owns the pid file: written once bound so a spawner's
+	// liveness check sees the true serving pid, removed on return (best-effort).
+	defer removePID(home)
 	err = srv.ListenAndServe(ctx, func(bound string) {
+		if err := writePID(home, os.Getpid()); err != nil {
+			fmt.Fprintf(w, "argus: serve: %v\n", err)
+		}
 		fmt.Fprintf(w, "argus: serving on http://%s\n", bound)
 	})
 	if err != nil && !errors.Is(err, context.Canceled) {

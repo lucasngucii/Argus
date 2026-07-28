@@ -35,11 +35,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "argus: user home dir: %v\n", err)
 			os.Exit(1)
 		}
-		if err := cli.Init(home); err != nil {
-			fmt.Fprintf(os.Stderr, "argus: init: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("argus: initialized ~/.argus and wired the PreToolUse hook in ~/.claude/settings.json")
+		os.Exit(cli.RunInit(os.Args[2:], home, os.Stdout))
 	case "doctor":
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -108,12 +104,20 @@ func main() {
 func runServe(argv []string) int {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	addr := fs.String("addr", "127.0.0.1:4600", "loopback address to bind")
+	status := fs.Bool("status", false, "report whether a background server is running, then exit")
+	stopFlag := fs.Bool("stop", false, "stop the background server, then exit")
 	fs.Parse(argv)
 
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "argus: user home dir: %v\n", err)
 		return 1
+	}
+	switch {
+	case *status:
+		return cli.ServeStatus(home, os.Stdout)
+	case *stopFlag:
+		return cli.ServeStop(home, os.Stdout)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
