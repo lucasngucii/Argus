@@ -122,24 +122,54 @@ func matchedCommands(names []string, cmds []shellast.Cmd) []shellast.Cmd {
 	return out
 }
 
-// hasAllFlags reports whether every letter in letters appears as its own
-// character in some short-flag cluster among cmds' args. `-rf` parses to the
-// cluster {r, f}; a long option like `--force` never contributes a letter.
+// hasAllFlags reports whether every required flag letter appears among cmds'
+// flags. Matching is case-insensitive — a security gate treats `-R` and `-r`
+// alike, since tools spell recursion both ways (notably rm/cp) — and the GNU
+// long form `--recursive` also credits `r`. Required letters are compared
+// lower-cased, so callers pass `"r"`, never `"R"`.
 func hasAllFlags(cmds []shellast.Cmd, letters []string) bool {
 	present := map[byte]bool{}
 	for _, c := range cmds {
 		for _, arg := range c.Args {
-			for ch := range shortFlagCluster(arg) {
+			for ch := range flagLetters(arg) {
 				present[ch] = true
 			}
 		}
 	}
 	for _, l := range letters {
-		if l == "" || !present[l[0]] {
+		if l == "" || !present[lowerASCII(l[0])] {
 			return false
 		}
 	}
 	return true
+}
+
+// flagLetters returns the option letters an arg contributes, lower-cased so
+// flag matching is case-insensitive. A short cluster (`-rf`, `-Rf`) yields its
+// letters; the long option `--recursive` yields `r` — the same recursive flag
+// spelled out, which `shortFlagCluster` alone would drop. Anything else yields
+// nothing.
+func flagLetters(arg string) map[byte]bool {
+	if arg == "--recursive" {
+		return map[byte]bool{'r': true}
+	}
+	cluster := shortFlagCluster(arg)
+	if len(cluster) == 0 {
+		return cluster
+	}
+	out := make(map[byte]bool, len(cluster))
+	for ch := range cluster {
+		out[lowerASCII(ch)] = true
+	}
+	return out
+}
+
+// lowerASCII lower-cases an ASCII letter byte; other bytes pass through.
+func lowerASCII(b byte) byte {
+	if b >= 'A' && b <= 'Z' {
+		return b + ('a' - 'A')
+	}
+	return b
 }
 
 // shortFlagCluster returns the set of letters in a single short-flag arg

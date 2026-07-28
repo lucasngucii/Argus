@@ -78,6 +78,9 @@ func scoreRmArg(target string) string {
 	if target == "/" || target == "~" || target == "$HOME" {
 		return "high"
 	}
+	if isTopLevelGlob(target) {
+		return "high"
+	}
 	if isSystemPath(target) {
 		return "high"
 	}
@@ -88,6 +91,17 @@ func scoreRmArg(target string) string {
 		return "low"
 	}
 	return "medium"
+}
+
+// isTopLevelGlob reports whether target is a shell glob at the root or home
+// level (`/*`, `~/*`, `$HOME/*`) — it expands to every top-level entry, so
+// deleting it is operationally identical to deleting root/home.
+func isTopLevelGlob(target string) bool {
+	switch target {
+	case "/*", "/*/", "~/*", "$HOME/*":
+		return true
+	}
+	return false
 }
 
 // hasDotDotSegment reports whether target contains a literal `..` path

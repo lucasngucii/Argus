@@ -306,3 +306,38 @@ func TestMCPMutatingSensitivePathStaysHighFloor(t *testing.T) {
 		t.Fatalf("mutating verb over a sensitive path must stay high, got %s", got)
 	}
 }
+
+// TestRmRecursiveFlagVariantsCatastrophic pins the floor bypass where the
+// recursive flag was written as `-R` (capital) or `--recursive` (long form):
+// both are recursive-rm forms equivalent to `-r`, so a catastrophic target
+// under any of them must hit the high floor.
+func TestRmRecursiveFlagVariantsCatastrophic(t *testing.T) {
+	for _, cmd := range []string{
+		"rm -rf /", "rm -Rf /", "rm -fR /", "rm --recursive /",
+		"rm --recursive --force /", "rm -R /etc",
+	} {
+		if got := sev(cmd, "/tmp"); got != "high" {
+			t.Fatalf("%q must be high, got %s", cmd, got)
+		}
+	}
+}
+
+// TestRmRootGlobCatastrophic pins the glob-target bypass: a shell glob at the
+// root or home level expands to every top-level entry, operationally identical
+// to deleting root/home.
+func TestRmRootGlobCatastrophic(t *testing.T) {
+	for _, cmd := range []string{"rm -rf /*", "rm -Rf /*", "rm -rf ~/*"} {
+		if got := sev(cmd, "/tmp"); got != "high" {
+			t.Fatalf("%q must be high, got %s", cmd, got)
+		}
+	}
+}
+
+// TestRmNonRecursiveNotOverPinned guards the FP boundary: a non-recursive rm
+// must not fire the recursive-rm rule (no false high), even in a prod cwd —
+// deleting a single file is not the catastrophic case this rule targets.
+func TestRmNonRecursiveNotOverPinned(t *testing.T) {
+	if got := sev("rm notes.txt", "/srv/prod-app"); got == "high" {
+		t.Fatalf("non-recursive rm must not be high, got %s", got)
+	}
+}
