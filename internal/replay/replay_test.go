@@ -66,11 +66,38 @@ func TestRescorePropagatesCapped(t *testing.T) {
 	}
 }
 
+// TestRescoreSeverityDiffersVerdictSame: the change predicate is "severity OR
+// verdict differs" — this row proves the severity clause, which no other
+// fixture exercises alone. Stored high/deny under acceptEdits; re-scored the
+// `sudo` rule yields medium and verdict.Map("medium","acceptEdits")=="deny",
+// so severity high->medium DIFFERS while verdict deny->deny is UNCHANGED. A
+// weaker verdict-only impl would wrongly drop this row; it MUST be reported.
+func TestRescoreSeverityDiffersVerdictSame(t *testing.T) {
+	rows := []store.Row{{
+		Tool: "Bash", Command: "sudo apt-get update", PermissionMode: "acceptEdits",
+		Severity: "high", Verdict: "deny",
+	}}
+	res := Rescore(rows, false, policy.Default())
+	if len(res.Changed) != 1 {
+		t.Fatalf("Changed = %+v, want exactly 1 (severity differs)", res.Changed)
+	}
+	c := res.Changed[0]
+	if c.OldSeverity != "high" || c.NewSeverity != "medium" {
+		t.Fatalf("severity %s->%s, want high->medium", c.OldSeverity, c.NewSeverity)
+	}
+	if c.OldVerdict != "deny" || c.NewVerdict != "deny" {
+		t.Fatalf("verdict %s->%s, want deny->deny (unchanged)", c.OldVerdict, c.NewVerdict)
+	}
+	if res.Summary["deny->deny"] != 1 {
+		t.Fatalf("summary = %+v, want deny->deny:1", res.Summary)
+	}
+}
+
 // TestRescoreMixedRowsAndSummary: only changed rows are reported and the
-// summary aggregates every transition across the batch. One escalating row,
-// one no-op, and one severity-only change (medium->medium under a different
-// mode is a no-op; use a low->medium under a non-interactive mode where the
-// verdict lands deny) exercise the counter keys.
+// summary aggregates every transition across the batch. One escalating row
+// (low/allow -> medium/ask), one no-op (already medium/ask, excluded), and one
+// escalating row under a non-interactive mode where the verdict lands deny
+// (low/allow -> medium/deny) exercise the counter keys.
 func TestRescoreMixedRowsAndSummary(t *testing.T) {
 	rows := []store.Row{
 		// escalates: low/allow -> medium/ask
