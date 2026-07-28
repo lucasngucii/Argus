@@ -108,6 +108,8 @@ func (srv *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/decisions", srv.handleDecisions)
 	mux.HandleFunc("/api/stream", srv.handleStream)
 	mux.HandleFunc("/api/explain", srv.handleExplain)
+	mux.HandleFunc("/api/policy", srv.handlePolicy)
+	mux.HandleFunc("/api/policy/versions/", srv.getPolicyVersion)
 	mux.HandleFunc("/api/", notFoundJSON)
 	mux.HandleFunc("/", srv.serveIndex)
 	return hostGuard(csrfGuard(limitBody(mux)))
