@@ -113,7 +113,11 @@ func matchedCommands(names []string, cmds []shellast.Cmd) []shellast.Cmd {
 	var out []shellast.Cmd
 	for _, c := range cmds {
 		for _, n := range names {
-			if c.Name == n {
+			// Exact name, or a `<name>.<suffix>` family variant — the Unix
+			// convention where `tool.type` is a build of `tool` (mkfs.ext4,
+			// mkfs.xfs). A trailing "." only, never "-", so this never conflates
+			// distinct binaries like docker vs docker-compose.
+			if c.Name == n || strings.HasPrefix(c.Name, n+".") {
 				out = append(out, c)
 				break
 			}

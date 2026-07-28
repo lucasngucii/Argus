@@ -341,3 +341,45 @@ func TestRmNonRecursiveNotOverPinned(t *testing.T) {
 		t.Fatalf("non-recursive rm must not be high, got %s", got)
 	}
 }
+
+// TestMkfsFamilyIsHighFloor pins the disk-format bypass: the real-world
+// filesystem-typed invocations (mkfs.ext4, mkfs.xfs, ...) were never matched
+// because the rule compared the command name exactly against "mkfs". Any mkfs
+// family command is a format-the-device operation and must hit the high floor.
+func TestMkfsFamilyIsHighFloor(t *testing.T) {
+	for _, cmd := range []string{
+		"mkfs.ext4 /dev/sda", "mkfs.xfs /dev/sdb", "mkfs /dev/sda",
+		"mkfs.btrfs -f /dev/sdc", "sudo mkfs.ext4 /dev/nvme0n1",
+	} {
+		if got := sev(cmd, "/tmp"); got != "high" {
+			t.Fatalf("%q must be high, got %s", cmd, got)
+		}
+	}
+}
+
+// TestDdWriteToDeviceIsHighFloor pins the dd write-only bypass: overwriting a
+// raw device via stdin (of=/dev/...) with no if= was not matched. Reading from
+// or writing to a device must hit the high floor.
+func TestDdWriteToDeviceIsHighFloor(t *testing.T) {
+	for _, cmd := range []string{
+		"dd if=/dev/zero of=/dev/sda", "dd of=/dev/sda bs=1M", "dd if=backup.img of=/dev/sdb",
+	} {
+		if got := sev(cmd, "/tmp"); got != "high" {
+			t.Fatalf("%q must be high, got %s", cmd, got)
+		}
+	}
+}
+
+// TestDiskFormatNoFalsePositiveOnMention guards the FP boundary: a command that
+// merely mentions mkfs in its arguments (a commit message, an echo) is not a
+// format operation — the rule keys off the command name, not free text.
+func TestDiskFormatNoFalsePositiveOnMention(t *testing.T) {
+	for _, cmd := range []string{
+		`git commit -m "document mkfs usage"`,
+		"echo running mkfs later",
+	} {
+		if got := sev(cmd, "/tmp"); got == "high" {
+			t.Fatalf("%q merely mentions mkfs, must not be high, got %s", cmd, got)
+		}
+	}
+}

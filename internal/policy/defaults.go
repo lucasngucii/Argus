@@ -121,7 +121,18 @@ func Floor() []Rule {
 			Match:  Match{Cmd: []string{"rm"}, Flags: []string{"r"}, TargetScorer: "rm_target"},
 			Reason: "recursive rm of a catastrophic target"},
 		{ID: "disk-format", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
-			Match: Match{Cmd: []string{"dd", "mkfs", "fdisk", "diskutil"}, ArgMatches: `if=|erase`}, Reason: "disk/format"},
+			// dd/diskutil are dangerous by their device argument: reading or writing
+			// a raw device (if=…, of=/dev/…) or an erase. of=/dev/ closes the
+			// write-only overwrite (`dd of=/dev/sda`, no if=). mkfs is handled by the
+			// disk-mkfs rule below — it is destructive by invocation, with no such
+			// arg to gate on, so it cannot share this ArgMatches gate.
+			Match: Match{Cmd: []string{"dd", "fdisk", "diskutil"}, ArgMatches: `if=|of=/dev/|erase`}, Reason: "disk/format"},
+		{ID: "disk-mkfs", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
+			// Any mkfs-family command (mkfs, mkfs.ext4, mkfs.xfs, …) formats a
+			// device — destructive by invocation, so no arg gate. matchedCommands
+			// credits the mkfs.<fstype> variants against the bare "mkfs" name; the
+			// exact-name gate on "mkfs" alone missed the common typed forms.
+			Match: Match{Cmd: []string{"mkfs"}}, Reason: "mkfs format"},
 		{ID: "forkbomb", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
 			Match: Match{Raw: `:\(\)\s*\{`}, Reason: "forkbomb"},
 		{ID: "pipe-to-shell", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
