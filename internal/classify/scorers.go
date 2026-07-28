@@ -78,6 +78,9 @@ func scoreRmArg(target string) string {
 	if target == "/" || target == "~" || target == "$HOME" {
 		return "high"
 	}
+	if isTopLevelGlob(target) {
+		return "high"
+	}
 	if isSystemPath(target) {
 		return "high"
 	}
@@ -88,6 +91,17 @@ func scoreRmArg(target string) string {
 		return "low"
 	}
 	return "medium"
+}
+
+// isTopLevelGlob reports whether target is a shell glob at the root or home
+// level (`/*`, `~/*`, `$HOME/*`) — it expands to every top-level entry, so
+// deleting it is operationally identical to deleting root/home.
+func isTopLevelGlob(target string) bool {
+	switch target {
+	case "/*", "/*/", "~/*", "$HOME/*":
+		return true
+	}
+	return false
 }
 
 // hasDotDotSegment reports whether target contains a literal `..` path
@@ -145,10 +159,10 @@ func nonFlagArgs(args []string) []string {
 // scores safe: those are the ordinary, recoverable cases.
 func ScoreGitDanger(f shellast.Facts) string {
 	for _, c := range f.Commands {
-		if c.Name != "git" || len(c.Args) == 0 {
+		if c.Name != "git" {
 			continue
 		}
-		sub, rest := c.Args[0], c.Args[1:]
+		sub, rest := gitSubcommand(c.Args)
 		switch sub {
 		case "push":
 			if containsAny(rest, []string{"--force", "-f", "--force-with-lease"}) {
@@ -162,9 +176,43 @@ func ScoreGitDanger(f shellast.Facts) string {
 			if hasForceFlag(rest) {
 				return "medium"
 			}
+		case "checkout":
+			// A pathspec checkout (`.` or after `--`) overwrites uncommitted work,
+			// which — unlike a reset --hard commit — is not recoverable from the
+			// reflog. A branch switch/create carries neither token, so it stays safe.
+			if containsAny(rest, []string{".", "--"}) {
+				return "medium"
+			}
 		}
 	}
 	return "safe"
+}
+
+// gitSubcommand returns git's subcommand and the args after it, skipping any
+// leading global options (`--no-pager`, `--git-dir=…`, `-c k=v`, `-C dir`, …).
+// The scorer used to read args[0] literally, so a single global flag before the
+// subcommand hid a force-push/hard-reset entirely. The short options -c/-C and
+// the separated long options consume the following token as their value.
+func gitSubcommand(args []string) (string, []string) {
+	valueFlags := map[string]bool{
+		"-c": true, "-C": true, "--git-dir": true, "--work-tree": true,
+		"--namespace": true, "--exec-path": true, "--super-prefix": true,
+	}
+	skip := false
+	for i, a := range args {
+		if skip {
+			skip = false
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			if valueFlags[a] {
+				skip = true // the next token is this flag's value, not the subcommand
+			}
+			continue
+		}
+		return a, args[i+1:]
+	}
+	return "", nil
 }
 
 // hasForceFlag reports whether any arg is `--force` or a short-flag cluster

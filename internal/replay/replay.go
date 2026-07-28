@@ -12,6 +12,9 @@
 package replay
 
 import (
+	"encoding/json"
+	"strings"
+
 	"github.com/lucasngucii/argus/internal/classify"
 	"github.com/lucasngucii/argus/internal/hook"
 	"github.com/lucasngucii/argus/internal/policy"
@@ -56,11 +59,15 @@ type Result struct {
 func Rescore(rows []store.Row, capped bool, candidate policy.Policy) Result {
 	res := Result{Total: len(rows), Summary: map[string]int{}, Capped: capped}
 	for _, r := range rows {
+		ti := hook.ToolInput{Command: r.Command, FilePath: r.File}
+		if strings.HasPrefix(r.Tool, "mcp__") {
+			ti.Raw = json.RawMessage(r.Command)
+		}
 		p := hook.Payload{
 			ToolName:       r.Tool,
 			PermissionMode: r.PermissionMode,
 			CWD:            r.CWD,
-			ToolInput:      hook.ToolInput{Command: r.Command, FilePath: r.File},
+			ToolInput:      ti,
 		}
 		d := classify.Classify(p, candidate)
 		nv := verdict.Map(d.Severity, r.PermissionMode)

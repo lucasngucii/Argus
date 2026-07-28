@@ -67,7 +67,9 @@
         },
         "redirectsTo": { "type": "string" },
         "targetScorer": { "type": "string" },
-        "raw": { "type": "string" }
+        "raw": { "type": "string" },
+        "mcpServer": { "type": "array", "items": { "type": "string" } },
+        "mcpTool": { "type": "string" }
       }
     },
     "condition": {

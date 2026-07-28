@@ -29,7 +29,10 @@ func Default() Policy {
 		{ID: "sudo", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "sudo",
 			Match: Match{Cmd: []string{"sudo"}}},
 		{ID: "docker-service", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "docker service/prod op",
-			Match: Match{Cmd: []string{"docker"}, ArgsContain: []string{"service", "stack", "swarm", "prune", "down"}}},
+			// Both the `docker` subcommand form and the legacy hyphenated
+			// `docker-compose` binary — the latter is its own command name, so it
+			// must be listed explicitly (matchedCommands' family-prefix is "." only).
+			Match: Match{Cmd: []string{"docker", "docker-compose"}, ArgsContain: []string{"service", "stack", "swarm", "prune", "down"}}},
 		{ID: "db-write", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "DB client write",
 			Match: Match{Cmd: []string{"psql", "mongosh", "mongo", "clickhouse-client"},
 				ArgMatches: `(?i)\b(insert\s+into|update\s|create\s+(table|database)|alter\s|grant\s)\b`}},
@@ -64,6 +67,40 @@ func Default() Policy {
 			// dotfile does not fire. medium/ask — editing dotfiles can be legitimate.
 			Match:  Match{Raw: `>>?\s*\S*\.(bash|zsh)rc\b`},
 			Reason: "shell redirect into a shell rc file (persistence)"},
+		{ID: "mcp-mutating-tool", Enabled: true, Severity: "medium", Tool: []string{"mcp"},
+			// No shell AST for MCP — the tool name is the only intent signal. Snake_case
+			// is the norm, so verbs are anchored on _ / start / end (\b does NOT split _).
+			Match:  Match{McpTool: `(?i)(^|_)(delete|drop|remove|destroy|truncate|write|create|update|put|patch|exec|run|kill|send|publish|revoke|deploy|merge|apply|grant|transfer)(_|$)`},
+			Reason: "MCP tool with a mutating action — review before running"},
+		{ID: "mcp-destructive-sql-args", Enabled: true, Severity: "medium", Tool: []string{"mcp"},
+			// Destructive SQL in MCP arguments. medium (ask), not a floor: args are
+			// freeform JSON, so this keyword heuristic must stay downgradable — consistent
+			// with the Bash db-write rule's severity for the same class of signal.
+			Match:  Match{Raw: `(?i)\b(drop|truncate)\s+(table|database)\b|\bdelete\s+from\b|\.drop\(\)|deletemany`},
+			Reason: "destructive SQL in MCP tool arguments"},
+		{ID: "mcp-read-sensitive-path", Enabled: true, Severity: "medium", Tool: []string{"mcp"},
+			// The read-side counterpart to the mcp-fileop-sensitive-path floor: a
+			// READ-verb MCP tool whose args target a credential/self-protect path.
+			// Bash floors credential *reads* (credential-system-write matches the path
+			// for any verb, cat included) but the MCP floor is AND-gated on a MUTATING
+			// verb, so reading a key over MCP would otherwise slip through — a real
+			// exfil path for a prompt-injected agent. medium (ask), not a floor: like
+			// the SQL-args rule, the path lives in freeform JSON, so it stays
+			// downgradable. AND-gated on BOTH the read verb AND the path, mirroring the
+			// floor, so a non-read tool merely mentioning such a path is not escalated.
+			// The path arm is copied from mcp-fileop-sensitive-path (inlined, not
+			// extracted — the two are the mutating/read halves of one surface).
+			Match: Match{
+				McpTool: `(?i)(^|_)(read|get|fetch|load|open|download|cat|show|view|dump|export|tail|head|print)(_|$)`,
+				Raw: leadBoundary + `\.ssh/(id_[A-Za-z0-9_]+|authorized_keys)\b` +
+					`|` + leadBoundary + `\.ssh` + trailBoundary +
+					`|` + leadBoundary + `\.aws/credentials\b` +
+					`|` + leadBoundary + `\.aws` + trailBoundary +
+					`|` + leadBoundary + `\.argus` + trailBoundary +
+					`|` + leadBoundary + `\.claude/settings(\.local)?\.json\b` +
+					`|` + leadBoundary + `\.claude` + trailBoundary +
+					`|/etc/sudoers\b`},
+			Reason: "MCP read-op targeting a credential/system/self-protect path"},
 	}
 	return p
 }
@@ -87,7 +124,18 @@ func Floor() []Rule {
 			Match:  Match{Cmd: []string{"rm"}, Flags: []string{"r"}, TargetScorer: "rm_target"},
 			Reason: "recursive rm of a catastrophic target"},
 		{ID: "disk-format", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
-			Match: Match{Cmd: []string{"dd", "mkfs", "fdisk", "diskutil"}, ArgMatches: `if=|erase`}, Reason: "disk/format"},
+			// dd/diskutil are dangerous by their device argument: reading or writing
+			// a raw device (if=…, of=/dev/…) or an erase. of=/dev/ closes the
+			// write-only overwrite (`dd of=/dev/sda`, no if=). mkfs is handled by the
+			// disk-mkfs rule below — it is destructive by invocation, with no such
+			// arg to gate on, so it cannot share this ArgMatches gate.
+			Match: Match{Cmd: []string{"dd", "fdisk", "diskutil"}, ArgMatches: `if=|of=/dev/|erase`}, Reason: "disk/format"},
+		{ID: "disk-mkfs", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
+			// Any mkfs-family command (mkfs, mkfs.ext4, mkfs.xfs, …) formats a
+			// device — destructive by invocation, so no arg gate. matchedCommands
+			// credits the mkfs.<fstype> variants against the bare "mkfs" name; the
+			// exact-name gate on "mkfs" alone missed the common typed forms.
+			Match: Match{Cmd: []string{"mkfs"}}, Reason: "mkfs format"},
 		{ID: "forkbomb", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
 			Match: Match{Raw: `:\(\)\s*\{`}, Reason: "forkbomb"},
 		{ID: "pipe-to-shell", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
@@ -106,6 +154,22 @@ func Floor() []Rule {
 				`|` + leadBoundary + `\.aws` + trailBoundary +
 				`|>\s*/etc/|/etc/sudoers\b`},
 			Reason: "credential file or system-config write"},
+		{ID: "mcp-fileop-sensitive-path", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"mcp"},
+			// A FILE-OP-named MCP tool whose args target a credential/system/self-protect
+			// path. AND-gated on BOTH signals so a non-file-op tool merely mentioning such
+			// a path in freeform args (a docs search, a chat message) is NOT floored — the
+			// floor stays reserved for a real write/delete against a sensitive target.
+			Match: Match{
+				McpTool: `(?i)(^|_)(write|delete|remove|move|copy|create|put|append|truncate|chmod|unlink)(_|$)`,
+				Raw: leadBoundary + `\.ssh/(id_[A-Za-z0-9_]+|authorized_keys)\b` +
+					`|` + leadBoundary + `\.ssh` + trailBoundary +
+					`|` + leadBoundary + `\.aws/credentials\b` +
+					`|` + leadBoundary + `\.aws` + trailBoundary +
+					`|` + leadBoundary + `\.argus` + trailBoundary +
+					`|` + leadBoundary + `\.claude/settings(\.local)?\.json\b` +
+					`|` + leadBoundary + `\.claude` + trailBoundary +
+					`|/etc/sudoers\b|>\s*/etc/`},
+			Reason: "MCP file-op targeting a credential/system/self-protect path"},
 	}
 	return append(f, SelfProtectRules()...)
 }

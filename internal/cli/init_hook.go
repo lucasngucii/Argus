@@ -14,6 +14,10 @@ import (
 // wrapper around the same binary still counts as "already wired".
 const gateCommand = "argus gate"
 
+// wiredMatcher is the PreToolUse matcher wired by fresh init. It gates Bash,
+// Write, and Edit commands, plus MCP tools (mcp__*).
+const wiredMatcher = "Bash|Write|Edit|mcp__.*"
+
 // wireHook idempotently adds a PreToolUse hook that runs argus gate to
 // ~/.claude/settings.json, without disturbing anything else already there.
 // It decodes the file into a generic map so keys and hook entries Argus
@@ -38,25 +42,27 @@ func wireHook(home string) error {
 	}
 	preToolUse, _ := hooks["PreToolUse"].([]any)
 
-	if hasGateHook(preToolUse) {
+	if e := gateEntry(preToolUse); e != nil {
+		// Self-heal a stale matcher (an install from before MCP gating) by
+		// APPENDING mcp coverage — never clobber a user's customized matcher.
+		if m, _ := e["matcher"].(string); !strings.Contains(m, "mcp__") {
+			if m == "" {
+				e["matcher"] = wiredMatcher
+			} else {
+				e["matcher"] = m + "|mcp__.*"
+			}
+			return writeSettings(path, settings)
+		}
 		return nil
 	}
 
 	hooks["PreToolUse"] = append(preToolUse, map[string]any{
-		"matcher": "Bash|Write|Edit",
+		"matcher": wiredMatcher,
 		"hooks": []any{
 			map[string]any{"type": "command", "command": gateCommand},
 		},
 	})
-
-	b, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return fmt.Errorf("init: marshal settings.json: %w", err)
-	}
-	if err := os.WriteFile(path, b, 0o644); err != nil {
-		return fmt.Errorf("init: write settings.json: %w", err)
-	}
-	return nil
+	return writeSettings(path, settings)
 }
 
 // settingsPath returns ~/.claude/settings.json under home.
@@ -81,11 +87,21 @@ func readSettings(path string) (map[string]any, error) {
 	return settings, nil
 }
 
-// hasGateHook reports whether any PreToolUse entry already runs the argus
-// gate command. This is the idempotency check that keeps a repeat Init (or
-// Doctor's verification) from either duplicating the entry or missing one a
-// user hand-edited.
-func hasGateHook(preToolUse []any) bool {
+// writeSettings marshals settings and writes them to path.
+func writeSettings(path string, settings map[string]any) error {
+	b, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("init: marshal settings.json: %w", err)
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		return fmt.Errorf("init: write settings.json: %w", err)
+	}
+	return nil
+}
+
+// gateEntry returns the PreToolUse entry map whose inner hook runs the argus
+// gate command, or nil if none exists.
+func gateEntry(preToolUse []any) map[string]any {
 	for _, entry := range preToolUse {
 		m, ok := entry.(map[string]any)
 		if !ok {
@@ -98,9 +114,15 @@ func hasGateHook(preToolUse []any) bool {
 				continue
 			}
 			if cmd, _ := hm["command"].(string); strings.Contains(cmd, gateCommand) {
-				return true
+				return m
 			}
 		}
 	}
-	return false
+	return nil
 }
+
+// hasGateHook reports whether any PreToolUse entry already runs the argus
+// gate command. This is the idempotency check that keeps a repeat Init (or
+// Doctor's verification) from either duplicating the entry or missing one a
+// user hand-edited.
+func hasGateHook(preToolUse []any) bool { return gateEntry(preToolUse) != nil }

@@ -122,6 +122,9 @@ func recordDecision(home string, p hook.Payload, pol policy.Policy, d classify.D
 		PolicyVersion:  pol.Version,
 		Obfuscation:    d.Obfuscated,
 	}
+	if p.IsMCP() {
+		row.Command = p.Subject()
+	}
 	if err := st.Insert(row); err != nil {
 		fmt.Fprintf(os.Stderr, "argus: gate: insert decision: %v\n", err)
 	}

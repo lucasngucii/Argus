@@ -42,6 +42,8 @@ bundles, see [`docs/policy-packs/`](policy-packs/).
 | `pipesInto` | The command's output is piped into one of these (e.g. `["sh","bash"]`). |
 | `redirectsTo` | An exact redirect target. |
 | `raw` | Regex over the entire raw command string — the escape hatch for shapes the other fields can't express (redirects, multi-command pipelines). |
+| `mcpServer` | MCP server segment(s), exact ANY-of (e.g. `["github"]`). |
+| `mcpTool` | Regex over the MCP tool segment (e.g. `(?i)(^|_)delete(_|$)`). |
 
 Commands are parsed with a real shell AST, not matched as raw text: `sudo`,
 `env`, `timeout`, etc. are unwrapped so the rule sees the actual command being
@@ -100,3 +102,44 @@ in for setups the default policy doesn't cover out of the box (e.g. an
 infra-teardown guard for `terraform`/`kubectl`/cloud CLIs). Each pack states
 plainly whether its severities are backed by a cited incident or are principled
 inference — see the pack's own README for specifics.
+
+## Gating MCP tools
+
+MCP tools (`mcp__server__tool`) are gated once the hook matcher includes
+`mcp__.*` (a fresh `argus init` wires it; `argus doctor` WARNs and a re-init
+self-heals an old install).
+
+**Default allow.** Rules judge the tool NAME and the args JSON (there is no
+shell AST for MCP — no semantic parsing).
+
+Built-in coverage:
+- `mcp-mutating-tool` (medium/ask — a mutating verb in the tool name)
+- `mcp-destructive-sql-args` (medium — destructive SQL in args)
+- `mcp-fileop-sensitive-path` (high — a file-op-named tool whose args target a
+  credential/system/self-protect path; **non-downgradable** floor rule)
+
+Target a specific server with `mcpServer`/`mcpTool`, e.g.:
+
+```json
+{ "id": "github-mcp-write", "enabled": true, "alwaysHigh": true, "tool": ["mcp"],
+  "severity": "high",
+  "match": { "mcpServer": ["github"], "mcpTool": "(?i)(^|_)(create|delete|merge|push)" },
+  "reason": "github write op" }
+```
+
+**Honest limit:** a mutating tool with an innocuous name and benign-looking args
+is `allow` unless you add a per-server rule — the floor is deliberately AND-gated
+(tool-name + path) to avoid non-recoverable false positives on freeform args, so
+a docs-search merely mentioning a credential path is not blocked.
+
+## Editing your policy
+
+- **By hand:** edit `~/.argus/policy.json` directly; `argus doctor` checks it
+  loads and validates, and warns if you've dropped a baseline rule.
+- **Web editor:** `argus serve` → **Policy** tab — validate-before-save (a bad
+  edit is rejected, the file is left untouched), every save is versioned with a
+  snapshot you can browse, and the **Replay** tab shows what a candidate policy
+  would have changed across your logged history before you commit to it.
+- **Dry-run a single command:** `argus explain "<command>"` shows the firing
+  rule, severity, verdict, and the parsed AST facts — the fastest way to check
+  a new rule does what you intended.

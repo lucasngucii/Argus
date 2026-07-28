@@ -183,3 +183,106 @@ func TestInitImportsLegacyDecisions(t *testing.T) {
 		t.Fatalf("legacy decision not imported, got rows: %+v", rows)
 	}
 }
+
+func TestInitWiresMCPMatcher(t *testing.T) {
+	home := t.TempDir()
+	if err := Init(home); err != nil {
+		t.Fatal(err)
+	}
+	m := readGateMatcher(t, home)
+	if !strings.Contains(m, "mcp__") {
+		t.Fatalf("fresh init matcher must gate MCP, got %q", m)
+	}
+}
+
+func TestInitHealsStaleMatcher(t *testing.T) {
+	home := t.TempDir()
+	if err := Init(home); err != nil {
+		t.Fatal(err)
+	}
+	setGateMatcher(t, home, "Bash|Write|Edit") // simulate an old install
+	if err := Init(home); err != nil {           // re-init must heal
+		t.Fatal(err)
+	}
+	m := readGateMatcher(t, home)
+	if !strings.Contains(m, "mcp__") {
+		t.Fatalf("re-init must heal the matcher to include mcp__, got %q", m)
+	}
+	// and it must NOT have duplicated the gate entry
+	if n := countGateEntries(t, home); n != 1 {
+		t.Fatalf("re-init must not duplicate the gate entry, got %d", n)
+	}
+}
+
+// readGateMatcher reads ~/.claude/settings.json, finds the PreToolUse entry
+// whose inner hook command contains "argus gate", and returns its matcher.
+func readGateMatcher(t *testing.T, home string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s map[string]any
+	if err := json.Unmarshal(b, &s); err != nil {
+		t.Fatal(err)
+	}
+	hooks, _ := s["hooks"].(map[string]any)
+	for _, e := range asSlice(hooks["PreToolUse"]) {
+		m, _ := e.(map[string]any)
+		for _, h := range asSlice(m["hooks"]) {
+			hm, _ := h.(map[string]any)
+			if cmd, _ := hm["command"].(string); strings.Contains(cmd, "argus gate") {
+				mt, _ := m["matcher"].(string)
+				return mt
+			}
+		}
+	}
+	t.Fatal("no argus gate entry found")
+	return ""
+}
+
+// setGateMatcher reads ~/.claude/settings.json, finds the PreToolUse entry
+// whose inner hook command contains "argus gate", sets its matcher, and writes
+// the file back.
+func setGateMatcher(t *testing.T, home, matcher string) {
+	t.Helper()
+	p := filepath.Join(home, ".claude", "settings.json")
+	b, _ := os.ReadFile(p)
+	var s map[string]any
+	json.Unmarshal(b, &s)
+	hooks, _ := s["hooks"].(map[string]any)
+	for _, e := range asSlice(hooks["PreToolUse"]) {
+		m, _ := e.(map[string]any)
+		for _, h := range asSlice(m["hooks"]) {
+			hm, _ := h.(map[string]any)
+			if cmd, _ := hm["command"].(string); strings.Contains(cmd, "argus gate") {
+				m["matcher"] = matcher
+			}
+		}
+	}
+	nb, _ := json.MarshalIndent(s, "", "  ")
+	os.WriteFile(p, nb, 0o644)
+}
+
+// countGateEntries counts PreToolUse entries whose hooks run the argus gate command.
+func countGateEntries(t *testing.T, home string) int {
+	t.Helper()
+	b, _ := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	var s map[string]any
+	json.Unmarshal(b, &s)
+	hooks, _ := s["hooks"].(map[string]any)
+	n := 0
+	for _, e := range asSlice(hooks["PreToolUse"]) {
+		m, _ := e.(map[string]any)
+		for _, h := range asSlice(m["hooks"]) {
+			hm, _ := h.(map[string]any)
+			if cmd, _ := hm["command"].(string); strings.Contains(cmd, "argus gate") {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// asSlice converts v to []any if it is one, else returns an empty slice.
+func asSlice(v any) []any { s, _ := v.([]any); return s }

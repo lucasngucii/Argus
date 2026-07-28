@@ -14,13 +14,15 @@ import (
 
 // explainRequest is the POST /api/explain body: a hypothetical tool call to
 // dry-run. File carries a Write/Edit path so file rules explain too, not only
-// Bash commands.
+// Bash commands. Args carries MCP tool_input JSON so MCP rules can judge the
+// arguments.
 type explainRequest struct {
 	Command string `json:"command"`
 	Tool    string `json:"tool"`
 	CWD     string `json:"cwd"`
 	Mode    string `json:"mode"`
 	File    string `json:"file"`
+	Args    string `json:"args"`
 }
 
 // explainResponse mirrors the CLI `argus explain` output as JSON: the firing
@@ -57,7 +59,7 @@ func (srv *Server) handleExplain(w http.ResponseWriter, r *http.Request) {
 		ToolName:       req.Tool,
 		CWD:            req.CWD,
 		PermissionMode: req.Mode,
-		ToolInput:      hook.ToolInput{Command: req.Command, FilePath: req.File},
+		ToolInput:      hook.ToolInput{Command: req.Command, FilePath: req.File, Raw: json.RawMessage(req.Args)},
 	}
 	facts := shellast.Extract(payload.Subject())
 	d := classify.Classify(payload, srv.loadPolicy())

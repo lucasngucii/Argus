@@ -1,5 +1,5 @@
 /bin/
 /npm/argus-*/bin/
 /dist/
-.nodeterm
+.nodeterm/
 .superpowers/sdd/

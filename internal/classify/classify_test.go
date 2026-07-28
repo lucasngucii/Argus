@@ -1,6 +1,7 @@
 package classify
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/lucasngucii/argus/internal/hook"
@@ -12,6 +13,9 @@ func bash(cmd, mode, cwd string) hook.Payload {
 }
 func sev(cmd, cwd string) string {
 	return Classify(bash(cmd, "default", cwd), policy.Default()).Severity
+}
+func mcp(name, argsJSON string) hook.Payload {
+	return hook.Payload{ToolName: name, PermissionMode: "default", ToolInput: hook.ToolInput{Raw: json.RawMessage(argsJSON)}}
 }
 
 func TestSudoRmIsHigh(t *testing.T) {
@@ -197,6 +201,255 @@ func TestRcFileReadNotFlagged(t *testing.T) {
 	for _, c := range []string{"cat ~/.bashrc", "source ~/.bashrc"} {
 		if sev(c, "/tmp") != "safe" {
 			t.Fatalf("%q must be safe (reading rc, not writing), got %s", c, sev(c, "/tmp"))
+		}
+	}
+}
+
+func TestMCPToolTokenAndFieldMatch(t *testing.T) {
+	pol := policy.Policy{Version: 1, Rules: []policy.Rule{
+		{ID: "gh-del", Enabled: true, Severity: "high", AlwaysHigh: true, Tool: []string{"mcp"},
+			Match: policy.Match{McpServer: []string{"github"}, McpTool: "(?i)(^|_)delete(_|$)"}, Reason: "x"}}}
+	if Classify(mcp("mcp__github__delete_repo", `{}`), pol).Severity != "high" {
+		t.Fatal("github delete must match")
+	}
+	if Classify(mcp("mcp__memory__delete_x", `{}`), pol).Severity == "high" {
+		t.Fatal("other server must not match")
+	}
+	if Classify(bash("delete stuff", "default", "/tmp"), pol).Severity == "high" {
+		t.Fatal("mcp rule must not fire on Bash")
+	}
+}
+
+func TestMCPFileopSensitivePathIsHighFloor(t *testing.T) {
+	cases := []struct{ name, args string }{
+		{"mcp__filesystem__write_file", `{"path":"/home/x/.ssh/authorized_keys","content":"k"}`},
+		{"mcp__filesystem__delete_file", `{"path":"/home/x/.argus/policy.json"}`},
+		{"mcp__fs__remove", `{"path":"/home/x/.aws/credentials"}`},
+	}
+	for _, c := range cases {
+		if got := Classify(mcp(c.name, c.args), policy.Default()).Severity; got != "high" {
+			t.Fatalf("%s must be high, got %s", c.name, got)
+		}
+	}
+}
+func TestMCPSearchMentioningPathNotFloored(t *testing.T) {
+	// the FP the AND-gate prevents: a non-file-op tool whose args merely MENTION a path.
+	if got := Classify(mcp("mcp__docs__search", `{"query":"how do I rotate /home/x/.ssh/id_rsa"}`), policy.Default()).Severity; got == "high" {
+		t.Fatalf("a docs search mentioning a credential path must NOT be floored, got %s", got)
+	}
+}
+func TestMCPFloorNotDowngradable(t *testing.T) {
+	pol := policy.Default()
+	pol.Rules = append(pol.Rules, policy.Rule{ID: "allow", Enabled: true, Allow: true, Tool: []string{"mcp"}, Match: policy.Match{Raw: ".*"}, Reason: "x"})
+	if Classify(mcp("mcp__filesystem__delete_file", `{"path":"/home/x/.ssh/id_rsa"}`), pol).Severity != "high" {
+		t.Fatal("allowlist must not downgrade the MCP floor")
+	}
+}
+
+func TestMCPMutatingToolIsMedium(t *testing.T) {
+	for _, n := range []string{"mcp__fs__delete_file", "mcp__db__drop_table", "mcp__x__exec_command",
+		"mcp__fs__write_file", "mcp__slack__send_message", "mcp__ci__deploy", "mcp__iam__grant_role", "mcp__gh__merge_pull_request"} {
+		if got := Classify(mcp(n, `{"a":"b"}`), policy.Default()).Severity; got != "medium" {
+			t.Fatalf("%s must be medium, got %s", n, got)
+		}
+	}
+}
+func TestMCPReadToolIsSafe(t *testing.T) {
+	for _, n := range []string{"mcp__fs__read_file", "mcp__gh__list_issues", "mcp__x__get_status", "mcp__x__search", "mcp__fs__list_updates"} {
+		if got := Classify(mcp(n, `{"a":"b"}`), policy.Default()).Severity; got != "safe" {
+			t.Fatalf("%s must be safe, got %s", n, got)
+		}
+	}
+}
+func TestMCPDestructiveSQLArgsIsMedium(t *testing.T) {
+	if got := Classify(mcp("mcp__db__query", `{"sql":"DROP TABLE users"}`), policy.Default()).Severity; got != "medium" {
+		t.Fatalf("DROP in MCP args must be medium (downgradable), got %s", got)
+	}
+}
+
+// TestMCPReadSensitivePathIsMedium closes the read-side credential gap: a
+// read-verb MCP tool whose args target a credential/self-protect path asks
+// (medium), symmetric with the Bash credential-read floor. It is downgradable
+// (not a floor) — args are freeform JSON, so this stays a heuristic — and it is
+// AND-gated on BOTH the read verb AND the path, so a non-read tool merely
+// mentioning such a path is not escalated (TestMCPSearchMentioningPathNotFloored).
+func TestMCPReadSensitivePathIsMedium(t *testing.T) {
+	cases := []struct{ name, args string }{
+		{"mcp__fs__read_file", `{"path":"/home/x/.ssh/id_rsa"}`},
+		{"mcp__fs__get_file", `{"path":"/home/x/.aws/credentials"}`},
+		{"mcp__fs__cat", `{"path":"/home/x/.argus/argus.db"}`},
+		{"mcp__fs__download", `{"src":"/home/x/.claude/settings.json"}`},
+	}
+	for _, c := range cases {
+		if got := Classify(mcp(c.name, c.args), policy.Default()).Severity; got != "medium" {
+			t.Fatalf("%s over a sensitive path must be medium, got %s", c.name, got)
+		}
+	}
+}
+
+// TestMCPReadBenignPathIsSafe guards the FP boundary: the same read verbs over
+// an ordinary path stay safe — the rule fires only when the sensitive-path arm
+// also matches.
+func TestMCPReadBenignPathIsSafe(t *testing.T) {
+	for _, n := range []string{"mcp__fs__read_file", "mcp__fs__get_file", "mcp__fs__cat", "mcp__fs__download"} {
+		if got := Classify(mcp(n, `{"path":"/home/x/project/main.go"}`), policy.Default()).Severity; got != "safe" {
+			t.Fatalf("%s over a benign path must be safe, got %s", n, got)
+		}
+	}
+}
+
+// TestMCPMutatingSensitivePathStaysHighFloor pins that adding the read rule did
+// not weaken the floor: a mutating verb over a sensitive path is still high, not
+// downgraded to the new medium.
+func TestMCPMutatingSensitivePathStaysHighFloor(t *testing.T) {
+	if got := Classify(mcp("mcp__fs__delete_file", `{"path":"/home/x/.ssh/id_rsa"}`), policy.Default()).Severity; got != "high" {
+		t.Fatalf("mutating verb over a sensitive path must stay high, got %s", got)
+	}
+}
+
+// TestRmRecursiveFlagVariantsCatastrophic pins the floor bypass where the
+// recursive flag was written as `-R` (capital) or `--recursive` (long form):
+// both are recursive-rm forms equivalent to `-r`, so a catastrophic target
+// under any of them must hit the high floor.
+func TestRmRecursiveFlagVariantsCatastrophic(t *testing.T) {
+	for _, cmd := range []string{
+		"rm -rf /", "rm -Rf /", "rm -fR /", "rm --recursive /",
+		"rm --recursive --force /", "rm -R /etc",
+	} {
+		if got := sev(cmd, "/tmp"); got != "high" {
+			t.Fatalf("%q must be high, got %s", cmd, got)
+		}
+	}
+}
+
+// TestRmRootGlobCatastrophic pins the glob-target bypass: a shell glob at the
+// root or home level expands to every top-level entry, operationally identical
+// to deleting root/home.
+func TestRmRootGlobCatastrophic(t *testing.T) {
+	for _, cmd := range []string{"rm -rf /*", "rm -Rf /*", "rm -rf ~/*"} {
+		if got := sev(cmd, "/tmp"); got != "high" {
+			t.Fatalf("%q must be high, got %s", cmd, got)
+		}
+	}
+}
+
+// TestRmNonRecursiveNotOverPinned guards the FP boundary: a non-recursive rm
+// must not fire the recursive-rm rule (no false high), even in a prod cwd —
+// deleting a single file is not the catastrophic case this rule targets.
+func TestRmNonRecursiveNotOverPinned(t *testing.T) {
+	if got := sev("rm notes.txt", "/srv/prod-app"); got == "high" {
+		t.Fatalf("non-recursive rm must not be high, got %s", got)
+	}
+}
+
+// TestMkfsFamilyIsHighFloor pins the disk-format bypass: the real-world
+// filesystem-typed invocations (mkfs.ext4, mkfs.xfs, ...) were never matched
+// because the rule compared the command name exactly against "mkfs". Any mkfs
+// family command is a format-the-device operation and must hit the high floor.
+func TestMkfsFamilyIsHighFloor(t *testing.T) {
+	for _, cmd := range []string{
+		"mkfs.ext4 /dev/sda", "mkfs.xfs /dev/sdb", "mkfs /dev/sda",
+		"mkfs.btrfs -f /dev/sdc", "sudo mkfs.ext4 /dev/nvme0n1",
+	} {
+		if got := sev(cmd, "/tmp"); got != "high" {
+			t.Fatalf("%q must be high, got %s", cmd, got)
+		}
+	}
+}
+
+// TestDdWriteToDeviceIsHighFloor pins the dd write-only bypass: overwriting a
+// raw device via stdin (of=/dev/...) with no if= was not matched. Reading from
+// or writing to a device must hit the high floor.
+func TestDdWriteToDeviceIsHighFloor(t *testing.T) {
+	for _, cmd := range []string{
+		"dd if=/dev/zero of=/dev/sda", "dd of=/dev/sda bs=1M", "dd if=backup.img of=/dev/sdb",
+	} {
+		if got := sev(cmd, "/tmp"); got != "high" {
+			t.Fatalf("%q must be high, got %s", cmd, got)
+		}
+	}
+}
+
+// TestDiskFormatNoFalsePositiveOnMention guards the FP boundary: a command that
+// merely mentions mkfs in its arguments (a commit message, an echo) is not a
+// format operation — the rule keys off the command name, not free text.
+func TestDiskFormatNoFalsePositiveOnMention(t *testing.T) {
+	for _, cmd := range []string{
+		`git commit -m "document mkfs usage"`,
+		"echo running mkfs later",
+	} {
+		if got := sev(cmd, "/tmp"); got == "high" {
+			t.Fatalf("%q merely mentions mkfs, must not be high, got %s", cmd, got)
+		}
+	}
+}
+
+// TestGitDangerGlobalFlagsBeforeSubcommand pins the evasion where a git global
+// option before the subcommand (`--no-pager`, `--git-dir=`, `-c k=v`, `-C dir`)
+// shifted the subcommand out of args[0], so the danger scorer read the flag as
+// the subcommand and returned safe. The scorer now skips leading global options.
+func TestGitDangerGlobalFlagsBeforeSubcommand(t *testing.T) {
+	for _, cmd := range []string{
+		"git push --force",
+		"git --no-pager push --force",
+		"git --git-dir=/x push --force",
+		"git -c core.hooksPath=/x push --force",
+		"git -C /repo push --force",
+		"git --no-pager reset --hard",
+	} {
+		if got := sev(cmd, "/tmp"); got != "medium" {
+			t.Fatalf("%q must be medium, got %s", cmd, got)
+		}
+	}
+}
+
+// TestGitDangerNegativesStaySafe guards the FP boundary: ordinary recoverable
+// git usage must not fire the danger rule.
+func TestGitDangerNegativesStaySafe(t *testing.T) {
+	for _, cmd := range []string{"git status", "git commit -m x", "git pull", "git push origin main", "git reset HEAD file"} {
+		if got := sev(cmd, "/tmp"); got != "safe" {
+			t.Fatalf("%q must be safe, got %s", cmd, got)
+		}
+	}
+}
+
+// TestGitCheckoutDiscardIsMedium covers the working-tree-discard blind spot:
+// `git checkout` with a pathspec (`.` or `--`) overwrites uncommitted work,
+// which — unlike a commit lost to reset --hard — is not in the reflog.
+func TestGitCheckoutDiscardIsMedium(t *testing.T) {
+	for _, cmd := range []string{"git checkout .", "git checkout -- .", "git checkout -- src/main.go"} {
+		if got := sev(cmd, "/tmp"); got != "medium" {
+			t.Fatalf("%q must be medium, got %s", cmd, got)
+		}
+	}
+}
+
+// TestGitCheckoutBranchSwitchStaysSafe guards the FP boundary: a branch switch
+// or creation is not a discard.
+func TestGitCheckoutBranchSwitchStaysSafe(t *testing.T) {
+	for _, cmd := range []string{"git checkout main", "git checkout -b feature"} {
+		if got := sev(cmd, "/tmp"); got == "medium" || got == "high" {
+			t.Fatalf("%q is a branch switch, must not fire, got %s", cmd, got)
+		}
+	}
+}
+
+// TestDockerComposeHyphenatedIsMedium pins the evasion where the legacy
+// hyphenated `docker-compose` binary bypassed the docker-service rule, which
+// only matched the `docker` command with a `compose` subcommand.
+func TestDockerComposeHyphenatedIsMedium(t *testing.T) {
+	for _, cmd := range []string{"docker-compose down", "docker-compose down -v", "docker compose down"} {
+		if got := sev(cmd, "/tmp"); got != "medium" {
+			t.Fatalf("%q must be medium, got %s", cmd, got)
+		}
+	}
+}
+
+// TestDockerBenignStaysSafe guards the FP boundary for both binary spellings.
+func TestDockerBenignStaysSafe(t *testing.T) {
+	for _, cmd := range []string{"docker ps", "docker build -t x .", "docker-compose ps"} {
+		if got := sev(cmd, "/tmp"); got == "medium" || got == "high" {
+			t.Fatalf("%q benign, must not fire, got %s", cmd, got)
 		}
 	}
 }

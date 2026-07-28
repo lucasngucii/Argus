@@ -39,3 +39,17 @@ func TestSeedRuleIDsMatchesDefault(t *testing.T) {
 		t.Fatalf("SeedRuleIDs() = %v, want %v (non-alwaysHigh enabled rule IDs of Default())", ids, want)
 	}
 }
+
+func TestValidateAndDecodeMCPMatch(t *testing.T) {
+	doc := []byte(`{"version":1,"rules":[{"id":"m","tool":["mcp"],"reason":"x","match":{"mcpServer":["github"],"mcpTool":"(?i)delete"}}]}`)
+	if err := Validate(doc); err != nil {
+		t.Fatalf("must validate: %v", err)
+	}
+	var p Policy
+	if err := json.Unmarshal(doc, &p); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Rules[0].Match.McpServer) != 1 || p.Rules[0].Match.McpTool == "" {
+		t.Fatal("mcpServer/mcpTool must decode into Match")
+	}
+}

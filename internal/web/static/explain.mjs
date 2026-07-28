@@ -31,6 +31,9 @@ export function mount(el) {
         <label>file (for Write/Edit)
           <input id="ex-file" type="text" placeholder="/home/x/.ssh/id_ed25519" autocomplete="off">
         </label>
+        <label>args (MCP tool arguments)
+          <textarea id="ex-args" placeholder='{"path":"/tmp/x"}'></textarea>
+        </label>
         <button type="submit">Explain</button>
       </form>
       <div id="ex-result" class="result"></div>
@@ -50,6 +53,7 @@ function submit(el, result) {
     tool: el.querySelector("#ex-tool").value,
     mode: el.querySelector("#ex-mode").value,
     file: el.querySelector("#ex-file").value,
+    args: el.querySelector("#ex-args").value,
   };
   result.textContent = "…";
   fetch("/api/explain", {

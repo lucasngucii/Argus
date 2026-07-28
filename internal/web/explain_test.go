@@ -96,3 +96,20 @@ func TestExplainHandler_CSRF(t *testing.T) {
 		t.Fatalf("explain without CSRF = %d, want 403", rec.Code)
 	}
 }
+
+// TestExplainHandler_MCP proves the args field is wired into the payload so
+// MCP rules can judge the tool arguments JSON — not just the tool name.
+func TestExplainHandler_MCP(t *testing.T) {
+	srv, err := testServer(t, "127.0.0.1:4600")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res explainResult
+	postJSON(t, srv, "/api/explain", map[string]string{
+		"tool": "mcp__filesystem__delete_file", "mode": "default",
+		"args": `{"path":"/home/x/.ssh/id_rsa"}`,
+	}, &res)
+	if res.Severity != "high" || res.Verdict != "deny" {
+		t.Fatalf("MCP file-op on a credential path must be high/deny, got %s/%s", res.Severity, res.Verdict)
+	}
+}
