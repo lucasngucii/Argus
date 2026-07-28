@@ -39,6 +39,12 @@ func Default() Policy {
 			// `(bash|sh|zsh)\s+…\.sh` alternative could never fire against args
 			// alone. The lead `[^-|;&]` guard keeps `bash --version` benign.
 			Match: Match{Raw: `(?i)\b(bash|sh|zsh)\s+[^-|;&]+\.sh\b|-c\s`}},
+		{ID: "grep-exfil", Enabled: true, Severity: "medium", Tool: []string{"Bash"},
+			// Credential search piped to a network sink — the documented grep→curl
+			// exfiltration shape (arXiv:2509.22040). medium (ask): a keyword heuristic,
+			// so it must stay downgradable, not a non-recoverable floor.
+			Match:  Match{Raw: `(?i)\b(grep|rg|ag)\b[^|]*(key|token|secret|credential|password)[^|]*\|\s*(curl|wget|nc|ncat)\b`},
+			Reason: "credential search piped to network exfiltration"},
 	}
 	return p
 }

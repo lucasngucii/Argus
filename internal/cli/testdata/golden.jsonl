@@ -6,3 +6,4 @@
 {"tool":"Bash","command":"bash /tmp/evil.sh","expect":"medium"}
 {"tool":"Bash","command":"sh -c \"echo hi\"","expect":"medium"}
 {"tool":"Bash","command":"bash --version","expect":"safe"}
+{"tool":"Bash","command":"grep -r TODO ./src","expect":"safe"}
