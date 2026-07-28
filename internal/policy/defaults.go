@@ -39,6 +39,31 @@ func Default() Policy {
 			// `(bash|sh|zsh)\s+…\.sh` alternative could never fire against args
 			// alone. The lead `[^-|;&]` guard keeps `bash --version` benign.
 			Match: Match{Raw: `(?i)\b(bash|sh|zsh)\s+[^-|;&]+\.sh\b|-c\s`}},
+		{ID: "grep-exfil", Enabled: true, Severity: "medium", Tool: []string{"Bash"},
+			// Credential search piped to a network sink — the documented grep→curl
+			// exfiltration shape (arXiv:2509.22040). medium (ask): a keyword heuristic,
+			// so it must stay downgradable, not a non-recoverable floor.
+			Match:  Match{Raw: `(?i)\b(grep|rg|ag)\b[^|]*(key|token|secret|credential|password)[^|]*\|\s*(curl|wget|nc|ncat)\b`},
+			Reason: "credential search piped to network exfiltration"},
+		{ID: "useradd-privileged", Enabled: true, Severity: "medium", Tool: []string{"Bash"},
+			// Creating/elevating a privileged account (sudo/wheel group) is a documented
+			// persistence step (arXiv:2509.22040). Exact-token argsContain (not a regex on
+			// "admin") so a user NAMED admin doesn't false-positive.
+			Match:  Match{Cmd: []string{"useradd", "usermod", "adduser"}, ArgsContain: []string{"sudo", "wheel"}},
+			Reason: "privileged account creation/elevation (persistence)"},
+		{ID: "pkg-install-lifecycle", Enabled: true, Severity: "medium", Tool: []string{"Bash"},
+			// npm install/i/ci/update runs code via lifecycle hooks (supply-chain RCE
+			// vector; Microsoft Mastra, Trend Micro Axios). Anchored so `npm i` matches
+			// and `npm run ci` does not. RE2 has no lookahead, so `--ignore-scripts`
+			// (the safe form) still asks — allowlist it if you want it silent.
+			Match:  Match{Cmd: []string{"npm"}, ArgMatches: `^(install|i|ci|update)\b`},
+			Reason: "npm install runs code via lifecycle hooks (supply-chain); --ignore-scripts still asks"},
+		{ID: "rc-file-inject", Enabled: true, Severity: "medium", Tool: []string{"Bash"},
+			// A shell redirect into ~/.bashrc/~/.zshrc is a documented persistence
+			// technique (arXiv:2509.22040). Matches the redirect shape only, so reading a
+			// dotfile does not fire. medium/ask — editing dotfiles can be legitimate.
+			Match:  Match{Raw: `>>?\s*\S*\.(bash|zsh)rc\b`},
+			Reason: "shell redirect into a shell rc file (persistence)"},
 	}
 	return p
 }

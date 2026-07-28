@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "meta": { "pack": "infra", "caveat": "severity is inference from MITRE T1485; not a directly-cited incident (research section 2.4)" },
+  "rules": [
+    { "id": "terraform-destroy", "enabled": true, "tool": ["Bash"], "severity": "medium",
+      "reason": "irreversible infrastructure teardown",
+      "match": { "cmd": ["terraform"], "argsContain": ["destroy"] },
+      "contextEscalation": [{ "when": { "cwdMatches": "prod" }, "to": "high" }] },
+    { "id": "terraform-auto-approve", "enabled": true, "tool": ["Bash"], "severity": "medium",
+      "reason": "applies infra changes with no confirmation step",
+      "match": { "cmd": ["terraform"], "argsContain": ["-auto-approve"] },
+      "contextEscalation": [{ "when": { "cwdMatches": "prod" }, "to": "high" }] },
+    { "id": "kubectl-delete-drain", "enabled": true, "tool": ["Bash"], "severity": "medium",
+      "reason": "removes live workloads/nodes from a cluster",
+      "match": { "cmd": ["kubectl"], "argsContain": ["delete", "drain"] },
+      "contextEscalation": [{ "when": { "cwdMatches": "prod" }, "to": "high" }] },
+    { "id": "cloud-cli-destroy", "enabled": true, "tool": ["Bash"], "severity": "medium",
+      "reason": "deletes/terminates cloud resources via provider CLI",
+      "match": { "cmd": ["aws", "gcloud", "az"], "argMatches": "(?i)\\b(delete|terminate-instances|rb)\\b" },
+      "contextEscalation": [{ "when": { "cwdMatches": "prod" }, "to": "high" }] }
+  ]
+}
