@@ -31,6 +31,7 @@ func Doctor(home string, w io.Writer) int {
 	report("hook: PreToolUse -> argus gate wired in ~/.claude/settings.json", checkHook(home))
 	report("policy: policy.json loads and schema-validates", checkPolicy(home))
 	warnMissingSeedRules(home, w)
+	warnMissingMCPMatcher(home, w)
 
 	st, err := store.Open(filepath.Join(home, ".argus", "argus.db"))
 	report("store: argus.db opens and is writable", err)
@@ -83,6 +84,25 @@ func warnMissingSeedRules(home string, w io.Writer) {
 	}
 	if len(missing) > 0 {
 		fmt.Fprintf(w, "WARN policy: missing baseline seed rules: %s\n", strings.Join(missing, ", "))
+	}
+}
+
+// warnMissingMCPMatcher prints a non-fatal WARN when the wired PreToolUse
+// matcher does not gate MCP tools (mcp__*) — an install from before MCP gating.
+// A re-run of `argus init` self-heals it. Does NOT change the exit code.
+func warnMissingMCPMatcher(home string, w io.Writer) {
+	settings, err := readSettings(settingsPath(home))
+	if err != nil {
+		return
+	}
+	hooks, _ := settings["hooks"].(map[string]any)
+	preToolUse, _ := hooks["PreToolUse"].([]any)
+	e := gateEntry(preToolUse)
+	if e == nil {
+		return // the hook check above already FAILs on a missing gate entry
+	}
+	if m, _ := e["matcher"].(string); !strings.Contains(m, "mcp__") {
+		fmt.Fprintln(w, "WARN hook: PreToolUse matcher does not gate MCP tools (mcp__*) — re-run 'argus init' to update it")
 	}
 }
 
