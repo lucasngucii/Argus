@@ -77,6 +77,11 @@ func RunHarness(paths []string, pol policy.Policy, w io.Writer) int {
 	return 0
 }
 
+// The corpus format ({tool, command, expect}) is Bash/file-tool only. MCP tool
+// calls carry arbitrary tool_input JSON, not a command string, so MCP gating is
+// covered by Go unit tests in internal/classify, not by this corpus — an mcp__*
+// line here would be mis-routed, so don't add one.
+
 // payloadFor builds the hook.Payload the classifier judges from one corpus
 // case. For Bash the command text is the subject; for every other tool the
 // subject is a file path (hook.Subject), so the command field is placed there.
