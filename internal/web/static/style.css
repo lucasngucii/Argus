@@ -1,0 +1,330 @@
+/* style.css — theme-aware via prefers-color-scheme. The severity palette
+   (safe/low/medium/high) is validated for both the light and dark chart
+   surfaces, so the same four hues are used in both themes; only the neutral
+   surfaces/ink swap. */
+
+:root {
+  --bg: #fcfcfb;
+  --surface: #ffffff;
+  --ink: #1a1a19;
+  --muted: #6b6b68;
+  --border: #e6e6e2;
+  --accent: #1971c2;
+
+  --sev-safe: #2f9e44;
+  --sev-low: #1971c2;
+  --sev-medium: #c77a0a;
+  --sev-high: #c92a2a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a19;
+    --surface: #242423;
+    --ink: #ececeb;
+    --muted: #9a9a97;
+    --border: #34342f;
+    --accent: #4dabf7;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.tab {
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.tab.active {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.tab:hover {
+  color: var(--ink);
+}
+
+.view {
+  padding: 18px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+
+h2 {
+  font-size: 15px;
+  margin: 4px 0 12px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.error {
+  color: var(--sev-high);
+}
+
+/* Tables */
+.rows {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.rows th,
+.rows td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.rows th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.rows td.subject {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 7px;
+  vertical-align: baseline;
+}
+
+/* Severity palette (validated light + dark) */
+.sev-safe { background: var(--sev-safe); }
+.sev-low { background: var(--sev-low); }
+.sev-medium { background: var(--sev-medium); }
+.sev-high { background: var(--sev-high); }
+
+.sev-fill.sev-safe { fill: var(--sev-safe); background: none; }
+.sev-fill.sev-low { fill: var(--sev-low); background: none; }
+.sev-fill.sev-medium { fill: var(--sev-medium); background: none; }
+.sev-fill.sev-high { fill: var(--sev-high); background: none; }
+
+/* Stat tiles */
+.tiles {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.tile {
+  flex: 0 0 auto;
+  min-width: 96px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.tile-value {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.tile-label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Forms */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 560px;
+}
+
+.form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.form-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+input[type="text"],
+select,
+.editor {
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+}
+
+button {
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.05);
+}
+
+.linkish {
+  color: var(--accent);
+  background: none;
+  padding: 0;
+  font-weight: 600;
+}
+
+.editor {
+  width: 100%;
+  min-height: 320px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+}
+
+.status {
+  color: var(--muted);
+}
+
+.status-ok {
+  color: var(--sev-safe);
+}
+
+.status-err {
+  color: var(--sev-high);
+}
+
+/* Explain result */
+.result {
+  margin-top: 14px;
+}
+
+.result-head {
+  display: flex;
+  align-items: center;
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+.kv {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+.kv-key {
+  color: var(--muted);
+  min-width: 96px;
+}
+
+.kv-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.versions {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+
+.versions li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--bg);
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  z-index: 10;
+}
+
+/* Severity chart */
+.sev-chart {
+  max-width: 100%;
+  overflow: visible;
+}
+
+.sev-chart-label {
+  fill: var(--ink);
+  font-size: 13px;
+}
+
+.sev-chart-value {
+  fill: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
