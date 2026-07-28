@@ -29,7 +29,10 @@ func Default() Policy {
 		{ID: "sudo", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "sudo",
 			Match: Match{Cmd: []string{"sudo"}}},
 		{ID: "docker-service", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "docker service/prod op",
-			Match: Match{Cmd: []string{"docker"}, ArgsContain: []string{"service", "stack", "swarm", "prune", "down"}}},
+			// Both the `docker` subcommand form and the legacy hyphenated
+			// `docker-compose` binary — the latter is its own command name, so it
+			// must be listed explicitly (matchedCommands' family-prefix is "." only).
+			Match: Match{Cmd: []string{"docker", "docker-compose"}, ArgsContain: []string{"service", "stack", "swarm", "prune", "down"}}},
 		{ID: "db-write", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "DB client write",
 			Match: Match{Cmd: []string{"psql", "mongosh", "mongo", "clickhouse-client"},
 				ArgMatches: `(?i)\b(insert\s+into|update\s|create\s+(table|database)|alter\s|grant\s)\b`}},

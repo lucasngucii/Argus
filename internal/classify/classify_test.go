@@ -383,3 +383,73 @@ func TestDiskFormatNoFalsePositiveOnMention(t *testing.T) {
 		}
 	}
 }
+
+// TestGitDangerGlobalFlagsBeforeSubcommand pins the evasion where a git global
+// option before the subcommand (`--no-pager`, `--git-dir=`, `-c k=v`, `-C dir`)
+// shifted the subcommand out of args[0], so the danger scorer read the flag as
+// the subcommand and returned safe. The scorer now skips leading global options.
+func TestGitDangerGlobalFlagsBeforeSubcommand(t *testing.T) {
+	for _, cmd := range []string{
+		"git push --force",
+		"git --no-pager push --force",
+		"git --git-dir=/x push --force",
+		"git -c core.hooksPath=/x push --force",
+		"git -C /repo push --force",
+		"git --no-pager reset --hard",
+	} {
+		if got := sev(cmd, "/tmp"); got != "medium" {
+			t.Fatalf("%q must be medium, got %s", cmd, got)
+		}
+	}
+}
+
+// TestGitDangerNegativesStaySafe guards the FP boundary: ordinary recoverable
+// git usage must not fire the danger rule.
+func TestGitDangerNegativesStaySafe(t *testing.T) {
+	for _, cmd := range []string{"git status", "git commit -m x", "git pull", "git push origin main", "git reset HEAD file"} {
+		if got := sev(cmd, "/tmp"); got != "safe" {
+			t.Fatalf("%q must be safe, got %s", cmd, got)
+		}
+	}
+}
+
+// TestGitCheckoutDiscardIsMedium covers the working-tree-discard blind spot:
+// `git checkout` with a pathspec (`.` or `--`) overwrites uncommitted work,
+// which — unlike a commit lost to reset --hard — is not in the reflog.
+func TestGitCheckoutDiscardIsMedium(t *testing.T) {
+	for _, cmd := range []string{"git checkout .", "git checkout -- .", "git checkout -- src/main.go"} {
+		if got := sev(cmd, "/tmp"); got != "medium" {
+			t.Fatalf("%q must be medium, got %s", cmd, got)
+		}
+	}
+}
+
+// TestGitCheckoutBranchSwitchStaysSafe guards the FP boundary: a branch switch
+// or creation is not a discard.
+func TestGitCheckoutBranchSwitchStaysSafe(t *testing.T) {
+	for _, cmd := range []string{"git checkout main", "git checkout -b feature"} {
+		if got := sev(cmd, "/tmp"); got == "medium" || got == "high" {
+			t.Fatalf("%q is a branch switch, must not fire, got %s", cmd, got)
+		}
+	}
+}
+
+// TestDockerComposeHyphenatedIsMedium pins the evasion where the legacy
+// hyphenated `docker-compose` binary bypassed the docker-service rule, which
+// only matched the `docker` command with a `compose` subcommand.
+func TestDockerComposeHyphenatedIsMedium(t *testing.T) {
+	for _, cmd := range []string{"docker-compose down", "docker-compose down -v", "docker compose down"} {
+		if got := sev(cmd, "/tmp"); got != "medium" {
+			t.Fatalf("%q must be medium, got %s", cmd, got)
+		}
+	}
+}
+
+// TestDockerBenignStaysSafe guards the FP boundary for both binary spellings.
+func TestDockerBenignStaysSafe(t *testing.T) {
+	for _, cmd := range []string{"docker ps", "docker build -t x .", "docker-compose ps"} {
+		if got := sev(cmd, "/tmp"); got == "medium" || got == "high" {
+			t.Fatalf("%q benign, must not fire, got %s", cmd, got)
+		}
+	}
+}
