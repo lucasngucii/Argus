@@ -106,6 +106,22 @@ func Floor() []Rule {
 				`|` + leadBoundary + `\.aws` + trailBoundary +
 				`|>\s*/etc/|/etc/sudoers\b`},
 			Reason: "credential file or system-config write"},
+		{ID: "mcp-fileop-sensitive-path", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"mcp"},
+			// A FILE-OP-named MCP tool whose args target a credential/system/self-protect
+			// path. AND-gated on BOTH signals so a non-file-op tool merely mentioning such
+			// a path in freeform args (a docs search, a chat message) is NOT floored — the
+			// floor stays reserved for a real write/delete against a sensitive target.
+			Match: Match{
+				McpTool: `(?i)(^|_)(write|delete|remove|move|copy|create|put|append|truncate|chmod|unlink)(_|$)`,
+				Raw: leadBoundary + `\.ssh/(id_[A-Za-z0-9_]+|authorized_keys)\b` +
+					`|` + leadBoundary + `\.ssh` + trailBoundary +
+					`|` + leadBoundary + `\.aws/credentials\b` +
+					`|` + leadBoundary + `\.aws` + trailBoundary +
+					`|` + leadBoundary + `\.argus` + trailBoundary +
+					`|` + leadBoundary + `\.claude/settings(\.local)?\.json\b` +
+					`|` + leadBoundary + `\.claude` + trailBoundary +
+					`|/etc/sudoers\b|>\s*/etc/`},
+			Reason: "MCP file-op targeting a credential/system/self-protect path"},
 	}
 	return append(f, SelfProtectRules()...)
 }

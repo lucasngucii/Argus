@@ -219,3 +219,29 @@ func TestMCPToolTokenAndFieldMatch(t *testing.T) {
 		t.Fatal("mcp rule must not fire on Bash")
 	}
 }
+
+func TestMCPFileopSensitivePathIsHighFloor(t *testing.T) {
+	cases := []struct{ name, args string }{
+		{"mcp__filesystem__write_file", `{"path":"/home/x/.ssh/authorized_keys","content":"k"}`},
+		{"mcp__filesystem__delete_file", `{"path":"/home/x/.argus/policy.json"}`},
+		{"mcp__fs__remove", `{"path":"/home/x/.aws/credentials"}`},
+	}
+	for _, c := range cases {
+		if got := Classify(mcp(c.name, c.args), policy.Default()).Severity; got != "high" {
+			t.Fatalf("%s must be high, got %s", c.name, got)
+		}
+	}
+}
+func TestMCPSearchMentioningPathNotFloored(t *testing.T) {
+	// the FP the AND-gate prevents: a non-file-op tool whose args merely MENTION a path.
+	if got := Classify(mcp("mcp__docs__search", `{"query":"how do I rotate /home/x/.ssh/id_rsa"}`), policy.Default()).Severity; got == "high" {
+		t.Fatalf("a docs search mentioning a credential path must NOT be floored, got %s", got)
+	}
+}
+func TestMCPFloorNotDowngradable(t *testing.T) {
+	pol := policy.Default()
+	pol.Rules = append(pol.Rules, policy.Rule{ID: "allow", Enabled: true, Allow: true, Tool: []string{"mcp"}, Match: policy.Match{Raw: ".*"}, Reason: "x"})
+	if Classify(mcp("mcp__filesystem__delete_file", `{"path":"/home/x/.ssh/id_rsa"}`), pol).Severity != "high" {
+		t.Fatal("allowlist must not downgrade the MCP floor")
+	}
+}
