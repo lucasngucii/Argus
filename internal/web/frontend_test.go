@@ -39,10 +39,12 @@ func TestFrontend_AssetsServedWithSaneTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 	cases := map[string]string{
-		"/static/app.mjs":   "javascript",
-		"/static/live.mjs":  "javascript",
-		"/static/stats.mjs": "javascript",
-		"/static/style.css": "css",
+		"/static/app.mjs":     "javascript",
+		"/static/live.mjs":    "javascript",
+		"/static/stats.mjs":   "javascript",
+		"/static/explain.mjs": "javascript",
+		"/static/policy.mjs":  "javascript",
+		"/static/style.css":   "css",
 	}
 	for path, wantCT := range cases {
 		rec := getAsset(t, srv, path)

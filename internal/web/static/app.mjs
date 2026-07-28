@@ -6,9 +6,11 @@
 
 import * as live from "/static/live.mjs";
 import * as stats from "/static/stats.mjs";
+import * as explain from "/static/explain.mjs";
+import * as policy from "/static/policy.mjs";
 
-// Explain/Policy (Task 12b) and Replay (Task 12c) append their modules here.
-const tabs = [live, stats];
+// Replay (Task 12c) appends its module here.
+const tabs = [live, stats, explain, policy];
 
 let cleanup = null;
 

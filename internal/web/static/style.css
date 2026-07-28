@@ -178,6 +178,125 @@ h2 {
   letter-spacing: 0.03em;
 }
 
+/* Forms */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 560px;
+}
+
+.form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.form-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+input[type="text"],
+select,
+.editor {
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+}
+
+button {
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.05);
+}
+
+.linkish {
+  color: var(--accent);
+  background: none;
+  padding: 0;
+  font-weight: 600;
+}
+
+.editor {
+  width: 100%;
+  min-height: 320px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+}
+
+.status {
+  color: var(--muted);
+}
+
+.status-ok {
+  color: var(--sev-safe);
+}
+
+.status-err {
+  color: var(--sev-high);
+}
+
+/* Explain result */
+.result {
+  margin-top: 14px;
+}
+
+.result-head {
+  display: flex;
+  align-items: center;
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+.kv {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+.kv-key {
+  color: var(--muted);
+  min-width: 96px;
+}
+
+.kv-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.versions {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+
+.versions li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
 /* Severity chart */
 .sev-chart {
   max-width: 100%;
