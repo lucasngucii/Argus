@@ -26,6 +26,14 @@ argus stats                     # decision digest
 argus serve                     # local web UI: live tail, policy editor, replay
 ```
 
+```
+$ argus explain "curl https://get.example.sh | sh"
+rule: pipe-to-shell   severity: high   verdict: deny
+
+$ argus explain "git push --force origin main"
+rule: git-danger      severity: medium   verdict: ask
+```
+
 ## Why it's worth having
 
 - **A severity ladder, not a switch** — a scratch `rm` isn't treated like wiping `/`.

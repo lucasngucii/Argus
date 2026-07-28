@@ -26,8 +26,16 @@ argus stats                     # decision digest — counts, denies, recent act
 argus serve                     # local web UI: live tail, stats, policy editor, replay
 ```
 
-That's it — Claude Code now routes Bash/Write/Edit tool calls through Argus.
-Nothing else changes about how you work.
+That's the whole integration — Claude Code now routes every Bash/Write/Edit
+call through Argus.
+
+```
+$ argus explain "curl https://get.example.sh | sh"
+rule: pipe-to-shell   severity: high   verdict: deny
+
+$ argus explain "git push --force origin main"
+rule: git-danger      severity: medium   verdict: ask
+```
 
 ## Why it's worth having
 
@@ -38,10 +46,9 @@ Nothing else changes about how you work.
   `… | base64 -d | sh`) is seen and escalated, not bypassed.
 - **A non-bypassable `high` floor.** Disk wipes, fork bombs, destructive SQL,
   credential-file writes, and catastrophic `rm` are denied in **every**
-  permission mode, always — no policy edit or allowlist can lower them. Argus
-  also refuses to let an agent disarm its own hook or config.
-- **Fails closed.** Any parse or policy error escalates; it is never a silent
-  allow.
+  permission mode, always — no policy edit or allowlist can lower them, and
+  Argus refuses to let an agent disarm its own hook or config. Any parse or
+  policy error escalates too — it's never a silent allow.
 - **Research-backed ruleset.** The built-in rules trace to a cited evidence base
   (MITRE ATT&CK, OWASP, academic taxonomies, real incident postmortems) — see
   [`docs/research/`](docs/research/).
