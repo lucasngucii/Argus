@@ -30,7 +30,6 @@ func Doctor(home string, w io.Writer) int {
 
 	report("hook: PreToolUse -> argus gate wired in ~/.claude/settings.json", checkHook(home))
 	report("policy: policy.json loads and schema-validates", checkPolicy(home))
-	warnMissingSeedRules(home, w)
 	warnMissingMCPMatcher(home, w)
 
 	st, err := store.Open(filepath.Join(home, ".argus", "argus.db"))
@@ -60,31 +59,6 @@ func checkHook(home string) error {
 func checkPolicy(home string) error {
 	_, err := policy.Load(filepath.Join(home, ".argus", "policy.json"))
 	return err
-}
-
-// warnMissingSeedRules prints a non-fatal WARN when the loaded policy is
-// missing any baseline seed rule — a user-edited policy silently losing its
-// default `medium` coverage. It does NOT change the exit code: the hard checks
-// still govern 0/non-0. A policy that fails to load is left to the policy check
-// above; there is nothing to compare here.
-func warnMissingSeedRules(home string, w io.Writer) {
-	pol, err := policy.Load(filepath.Join(home, ".argus", "policy.json"))
-	if err != nil {
-		return
-	}
-	present := make(map[string]bool, len(pol.Rules))
-	for _, r := range pol.Rules {
-		present[r.ID] = true
-	}
-	var missing []string
-	for _, id := range policy.SeedRuleIDs() {
-		if !present[id] {
-			missing = append(missing, id)
-		}
-	}
-	if len(missing) > 0 {
-		fmt.Fprintf(w, "WARN policy: missing baseline seed rules: %s\n", strings.Join(missing, ", "))
-	}
 }
 
 // warnMissingMCPMatcher prints a non-fatal WARN when the wired PreToolUse

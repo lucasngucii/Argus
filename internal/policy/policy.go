@@ -3,7 +3,6 @@
 package policy
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 )
@@ -64,21 +63,14 @@ type Policy struct {
 	Rules    []Rule            `json:"rules"`
 }
 
-// Load reads and schema-validates the policy document at path. Validating
-// before unmarshalling ensures malformed documents (bad severity,
-// non-integer version, ...) are rejected with a precise schema error rather
-// than silently coerced by Go's JSON decoder.
+// Load reads, schema-validates, normalizes, and assembles the policy document
+// at path against the binary-owned Baseline() — so an old-format file (or one
+// missing rules a newer binary ships) always gets the current baseline
+// coverage rather than whatever was last written to disk.
 func Load(path string) (Policy, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return Policy{}, fmt.Errorf("load policy: %w", err)
 	}
-	if err := Validate(b); err != nil {
-		return Policy{}, fmt.Errorf("load policy %s: %w", path, err)
-	}
-	var p Policy
-	if err := json.Unmarshal(b, &p); err != nil {
-		return Policy{}, fmt.Errorf("load policy %s: decode policy: %w", path, err)
-	}
-	return p, nil
+	return EffectiveFromBytes(b)
 }
