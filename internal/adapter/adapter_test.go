@@ -8,10 +8,10 @@ func TestCanonical(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"", "claude-code", false},          // bare `argus gate`, old install
+		{"", "claude-code", false}, // bare `argus gate`, old install
 		{"claude-code", "claude-code", false},
-		{"codex", "", true},                 // not yet a known harness
-		{"CLAUDE-CODE", "", true},           // case-sensitive; unknown
+		{"codex", "", true},       // not yet a known harness
+		{"CLAUDE-CODE", "", true}, // case-sensitive; unknown
 		{"claude", "", true},
 	}
 	for _, tt := range tests {
