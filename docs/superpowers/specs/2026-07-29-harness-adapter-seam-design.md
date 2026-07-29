@@ -187,15 +187,23 @@ Only the severity floor (`high → deny`) is universal.
   would silently break duplicate-detection and re-append on every `init`.
 - `Probe(name, home) error` is a `switch name` in `cli`; the claude case is the
   existing `checkHook`, extended with **harness discovery**: doctor reads the
-  wired command in `settings.json` and extracts the configured harness with a
-  fixed rule — **match `--harness=` followed by one run of non-whitespace
-  characters (the `=` form only, exactly what `init` writes)**; the
-  space-separated form (`--harness x`) and a single dash are NOT recognized and
-  read as absent; absent ⇒ `""`. The extracted value goes through `Canonical`,
-  yielding a tri-state: **bare (`""`) = PASS, known = PASS, unknown = FAIL**
-  (a non-nil error naming the offending value, rendered by doctor's `report` as
-  `FAIL %v`). Without this, a hook wired with `--harness=bogus` would PASS doctor
-  while every live call denies (the blind-operator failure).
+  wired command in `settings.json` and extracts the configured harness **the
+  same way the runtime gate does**, so doctor and gate provably agree on every
+  input. It tokenizes the wired command with the shell parser (`mvdan/sh`, the
+  pre-approved dep already central to the trust story), locates the `gate`
+  subcommand token, and flag-parses the tokens after it with a `--harness`
+  string flag — matching the runtime's `flag` semantics: both the `--harness=x`
+  and `--harness x` forms, and last-occurrence-wins on a repeated flag. (An
+  earlier draft used a bespoke `--harness=(\S+)` regex that recognized only the
+  `=` form and the first match; that diverged from the runtime `flag` parser —
+  a hand-edited `--harness x` or a duplicated flag made doctor PASS a hook the
+  gate would reject on every call, and a shell-quoted value made doctor FAIL a
+  working hook. Reusing the shell parser + `flag` closes both.) The resolved
+  value goes through `Canonical`, yielding a tri-state: **bare (`""`) = PASS,
+  known = PASS, unknown/parse-error = FAIL** (a non-nil error naming the
+  offending value, rendered by doctor's `report` as `FAIL %v`). Without this, a
+  hook wired with `--harness=bogus` would PASS doctor while every live call
+  denies (the blind-operator failure).
 
 ## 4. Invariants & how they hold
 
