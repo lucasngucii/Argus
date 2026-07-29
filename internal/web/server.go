@@ -109,6 +109,7 @@ func (srv *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/stream", srv.handleStream)
 	mux.HandleFunc("/api/explain", srv.handleExplain)
 	mux.HandleFunc("/api/policy", srv.handlePolicy)
+	mux.HandleFunc("/api/policy/effective", srv.handleEffective)
 	mux.HandleFunc("/api/policy/versions/", srv.getPolicyVersion)
 	mux.HandleFunc("/api/replay", srv.handleReplay)
 	mux.HandleFunc("/api/allowlist", srv.handleAllowlist)
