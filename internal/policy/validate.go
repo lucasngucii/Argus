@@ -49,17 +49,14 @@ func compiledSchema() (*jsonschema.Schema, error) {
 	return c.Compile("schema.json")
 }
 
-// SeedRuleIDs returns the IDs of Default()'s enabled, non-AlwaysHigh rules —
-// the baseline rule set a fresh install seeds from. Derived from Default()
-// rather than hard-coded so this list can never drift from the actual seed
-// policy.
+// SeedRuleIDs returns the IDs of Baseline()'s rules — the baseline rule set a
+// fresh install seeds from. Derived from Baseline() rather than hard-coded so
+// this list can never drift from the actual seed policy.
 func SeedRuleIDs() []string {
-	def := Default()
-	ids := make([]string, 0, len(def.Rules))
-	for _, r := range def.Rules {
-		if r.Enabled && !r.AlwaysHigh {
-			ids = append(ids, r.ID)
-		}
+	base := Baseline()
+	ids := make([]string, 0, len(base))
+	for _, r := range base {
+		ids = append(ids, r.ID)
 	}
 	return ids
 }

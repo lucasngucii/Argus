@@ -19,7 +19,7 @@ const trailBoundary = `(/|[\s;&|)"']|$)`
 // the fail-closed fallback for a missing/unreadable policy.json (gate, web
 // explain).
 func Default() Policy {
-	return Policy{Version: 1, Rules: Baseline()}
+	return File{Version: 1}.Effective()
 }
 
 // Baseline returns the binary-owned seed rules — the medium-severity "ask"
