@@ -286,3 +286,30 @@ func countGateEntries(t *testing.T, home string) int {
 
 // asSlice converts v to []any if it is one, else returns an empty slice.
 func asSlice(v any) []any { s, _ := v.([]any); return s }
+
+func TestSeedPolicyWritesThinDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.json")
+	if _, err := seedPolicy(path); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f policy.File
+	if err := json.Unmarshal(b, &f); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Rules) != 0 || len(f.Overrides) != 0 {
+		t.Errorf("fresh policy must be thin (no rules, no overrides), got %+v", f)
+	}
+	// And the effective policy from it still carries the full baseline.
+	pol, err := policy.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pol.Rules) < len(policy.Baseline()) {
+		t.Error("thin default must still yield the full baseline effective policy")
+	}
+}

@@ -60,7 +60,7 @@ func seedPolicy(path string) ([]byte, error) {
 		return nil, fmt.Errorf("init: read existing policy.json: %w", err)
 	}
 
-	b, err := json.MarshalIndent(policy.Default(), "", "  ")
+	b, err := json.MarshalIndent(policy.DefaultFile(), "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("init: marshal default policy: %w", err)
 	}
