@@ -60,6 +60,26 @@ func TestDoctorNoWarnOnCleanThinPolicy(t *testing.T) {
 	}
 }
 
+// TestDoctorFailsOnUnknownConfiguredHarness pins Doctor's CI-gate contract at
+// the Doctor() level (not just Probe in isolation): a wired hook that
+// configures an unknown --harness value must flip Doctor's exit code to 1 and
+// surface a FAIL line naming the offending value, since every live gate call
+// would otherwise fail closed silently.
+func TestDoctorFailsOnUnknownConfiguredHarness(t *testing.T) {
+	home := t.TempDir()
+	writeHookCommand(t, home, "argus gate --harness=bogus")
+
+	var out bytes.Buffer
+	code := Doctor(home, &out)
+
+	if code != 1 {
+		t.Errorf("Doctor with hook configuring unknown harness must return 1, got %d", code)
+	}
+	if !strings.Contains(out.String(), "FAIL") || !strings.Contains(out.String(), "bogus") {
+		t.Errorf("Doctor output must FAIL and name the offending harness \"bogus\"; got %s", out.String())
+	}
+}
+
 func TestDoctorWarnsBaselineDrift(t *testing.T) {
 	home := t.TempDir()
 	argus := filepath.Join(home, ".argus")

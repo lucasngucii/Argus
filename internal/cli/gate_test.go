@@ -89,6 +89,33 @@ func TestGateShadowRecordsRealVerdictButEmitsAllow(t *testing.T) {
 	}
 }
 
+// TestGatePolicyLoadFailureFallsBackToDefaultRuleset closes a gap no existing
+// test catches: a corrupt policy.json must fall back to the SEEDED default
+// ruleset (policy.Default()), not to an empty one. "sudo" is a seeded
+// Baseline() rule that is medium/ask under Default() but classifies as safe
+// (allow) under an empty ruleset — so only this distinguishes "fell back to
+// the real default ruleset" from "fell back to nothing."
+func TestGatePolicyLoadFailureFallsBackToDefaultRuleset(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".argus"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".argus", "policy.json"), []byte(`{ not json`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	in := `{"tool_name":"Bash","permission_mode":"default","tool_input":{"command":"sudo ls"}}`
+	Gate(strings.NewReader(in), &out, home, "claude-code")
+
+	if !strings.Contains(out.String(), `"permissionDecision":"ask"`) {
+		t.Fatalf("corrupt policy.json must fall back to policy.Default() (sudo -> ask), got %s", out.String())
+	}
+	if strings.Contains(out.String(), `"permissionDecision":"allow"`) {
+		t.Fatalf("corrupt policy.json must NOT fall back to an empty ruleset (sudo -> allow); got %s", out.String())
+	}
+}
+
 // gateFailWriter fails every write, to exercise Gate's fail-closed exit code.
 type gateFailWriter struct{}
 

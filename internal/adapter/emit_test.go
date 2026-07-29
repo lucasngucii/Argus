@@ -48,6 +48,27 @@ func TestEmitUnknownHarnessFailsClosedNoWrite(t *testing.T) {
 	}
 }
 
+// TestEmitUnknownVerdictCoercedToDeny pins the defense-in-depth choke point:
+// an Outcome.Verdict outside {"allow","ask","deny"} (an empty zero-value, or
+// some other stray string) must never reach verdict.Emit as-is — it must be
+// coerced to "deny" before serialization, since an unrecognized
+// permissionDecision is no-opinion to Claude Code, which is fail-open.
+func TestEmitUnknownVerdictCoercedToDeny(t *testing.T) {
+	for _, v := range []string{"", "block"} {
+		var buf bytes.Buffer
+		if code := Emit("claude-code", &buf, Outcome{Verdict: v, Reason: "x"}); code != 0 {
+			t.Fatalf("Emit(%q) code=%d, want 0", v, code)
+		}
+		s := buf.String()
+		if !strings.Contains(s, `"permissionDecision":"deny"`) {
+			t.Errorf("Emit(verdict=%q) must coerce to deny; got %q", v, s)
+		}
+		if strings.Contains(s, `"permissionDecision":""`) || strings.Contains(s, `"permissionDecision":"`+v+`"`) && v != "" {
+			t.Errorf("Emit(verdict=%q) must not serialize the raw unknown verdict; got %q", v, s)
+		}
+	}
+}
+
 func TestEmitDenyNeverBecomesAllow(t *testing.T) {
 	var buf bytes.Buffer
 	Emit("claude-code", &buf, Outcome{Verdict: "deny", Reason: "floored"})
