@@ -1,17 +1,13 @@
 package cli
 
 import (
+	"flag"
 	"fmt"
-	"regexp"
+	"io"
 
 	"github.com/lucasngucii/argus/internal/adapter"
+	"github.com/lucasngucii/argus/internal/shellast"
 )
-
-// harnessFlag matches the harness value in a wired command: `--harness=` followed
-// by one run of non-whitespace. Only the `=` form (what fresh wiring writes) is
-// recognized; the space-separated form reads as absent, so a hand-editor who uses
-// it is treated as a bare (claude-code) install.
-var harnessFlag = regexp.MustCompile(`--harness=(\S+)`)
 
 // Probe verifies the named harness's install is intact for doctor. For
 // claude-code it checks the PreToolUse hook is wired AND that the harness the
@@ -48,12 +44,46 @@ func checkConfiguredHarness(home string) error {
 		return nil // no gate entry; checkHook already reported that
 	}
 	cmd := gateCommandString(entry)
-	configured := ""
-	if m := harnessFlag.FindStringSubmatch(cmd); m != nil {
-		configured = m[1]
+
+	configured, err := configuredHarness(cmd)
+	if err != nil {
+		// The runtime gate would os.Exit(2) on this same malformed flag set
+		// and brick every call; doctor must FAIL just as loudly.
+		return err
 	}
 	if _, err := adapter.Canonical(configured); err != nil {
 		return fmt.Errorf("hook configures %w", err)
 	}
 	return nil
+}
+
+// configuredHarness extracts the --harness value the wired command actually
+// configures at runtime. It tokenizes cmd with the real shell AST (shellast),
+// finds the "gate" subcommand token, and parses everything after it with the
+// exact same flag.FlagSet cmd/argus/main.go uses — so doctor can never
+// disagree with what the live gate will do: both `--harness=x` and
+// `--harness x` are accepted, a repeated flag has last-occurrence-wins, and
+// shell quoting is already stripped by the tokenizer.
+func configuredHarness(cmd string) (string, error) {
+	facts := shellast.Extract(cmd)
+	for _, c := range facts.Commands {
+		for i, a := range c.Args {
+			if a != "gate" {
+				continue
+			}
+			fs := flag.NewFlagSet("gate", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			harness := fs.String("harness", "", "")
+			if err := fs.Parse(c.Args[i+1:]); err != nil {
+				return "", fmt.Errorf("hook command %q: %w", cmd, err)
+			}
+			return *harness, nil
+		}
+	}
+	// No command surfaced a "gate" subcommand token at all — an exotic
+	// wrapper (e.g. `sh -c '...'`) that shellast doesn't descend into. Known
+	// residual: rare hand-edit, and the live gate still fails closed on
+	// whatever it actually resolves to at runtime; treat as absent here so
+	// doctor doesn't false-FAIL a wrapper it can't see into.
+	return "", nil
 }
