@@ -126,6 +126,24 @@ func gateEntry(preToolUse []any) map[string]any {
 	return nil
 }
 
+// gateCommandString returns the command string of the inner hook within entry
+// whose command contains gateCommand — the same hook gateEntry matched on, not
+// blindly the first inner hook, so a hand-edited multi-hook entry is read
+// correctly. Returns "" if none.
+func gateCommandString(entry map[string]any) string {
+	inner, _ := entry["hooks"].([]any)
+	for _, h := range inner {
+		hm, ok := h.(map[string]any)
+		if !ok {
+			continue
+		}
+		if cmd, _ := hm["command"].(string); strings.Contains(cmd, gateCommand) {
+			return cmd
+		}
+	}
+	return ""
+}
+
 // hasGateHook reports whether any PreToolUse entry already runs the argus
 // gate command. This is the idempotency check that keeps a repeat Init (or
 // Doctor's verification) from either duplicating the entry or missing one a
