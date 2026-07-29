@@ -328,3 +328,13 @@ button:hover {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
+
+/* Policy baseline-override editor */
+.baselines { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+.baselines th, .baselines td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.baselines tr.overridden td { background: rgba(255, 200, 0, 0.10); }
+.baselines td code { font-weight: 600; }
+.userrules { list-style: none; padding-left: 0; margin-bottom: 1rem; }
+.userrules li { padding: 2px 0; }
+.advanced { margin: 1rem 0; }
+.advanced .editor { width: 100%; min-height: 160px; }
