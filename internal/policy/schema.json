@@ -18,6 +18,17 @@
     "rules": {
       "type": "array",
       "items": { "$ref": "#/$defs/rule" }
+    },
+    "overrides": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "severity": { "type": "string", "enum": ["safe", "low", "medium", "high"] }
+        },
+        "additionalProperties": false
+      }
     }
   },
   "$defs": {
