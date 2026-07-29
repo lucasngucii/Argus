@@ -35,8 +35,13 @@ the non-negotiable ruleset; the file owns a small, well-bounded override layer.
 - A binary-owned baseline rule set (`Baseline()`), reassembled every load.
 - A thin on-disk policy format: `overrides` (baseline tweaks) + `rules` (user).
 - Backward-compatible load of existing (old-format) policy files, via a single
-  `normalize` step that folds inline baseline edits into overrides (migration
-  fidelity **M1** — no user edit is silently lost).
+  `normalize` step that folds an inline baseline's `enabled`/`severity` edit into
+  an override (migration fidelity **M1**). Scope of M1 is exactly the override
+  surface: an `enabled` or `severity` edit to a baseline is preserved; a baseline
+  copy that differs only in `match`/`reason` is intentionally discarded (the
+  binary now owns those — that is the point of the change). A `contextEscalation`
+  a user added to a baseline has no override equivalent and is **not** preserved
+  — a documented limitation (§4.1), surfaced by `doctor`, not silently swallowed.
 - Effective-policy assembly at load (dirty shell); `classify` unchanged (pure).
 - `schema.json` superset accepting both old and new formats.
 - CLI: `init` writes the thin default; `doctor` drops the now-impossible
@@ -161,6 +166,18 @@ Accepts any historically-valid document and yields a canonical `File`:
 - Merge any explicit `overrides` block from the document (explicit wins over
   derived, though in practice they won't collide).
 
+A user rule that happens to reuse a baseline ID is **not** treated as a baseline
+copy when it is an allowlist entry (`allow:true`) — an allow rule is never a
+baseline, so it is always kept in `File.Rules` (guards against an allowlist entry
+being silently swallowed by an ID collision).
+
+Non-`enabled`/`severity` differences in an inline baseline copy (`match`,
+`reason`, `tool`, `contextEscalation`) have no override representation and are
+**not** carried over — the binary's current definition wins (intended: the whole
+point is that the binary owns those). This is not silent: `doctor` reads the raw
+pre-`normalize` file and **warns** when an inline baseline copy carried such a
+customization, so the operator knows their hand-edit was superseded (§6).
+
 `normalize` is total and pure (no I/O): the same result whether the input is a
 brand-new thin file, an old fat file, or empty. It is the single migration
 authority — used by `Load`, by web save, and by replay's candidate path, so
@@ -215,6 +232,11 @@ to attach to) and surfaced by `doctor` (§6).
     an unknown key → `WARN policy: override references unknown baseline rule "<id>"`
     (a stale override after a rule was renamed/removed). This is the correctly-
     oriented drift check for the new model.
+  - **Add** a migration-honesty check: read the raw file and warn when an inline
+    baseline copy differs from the binary in a non-migratable field
+    (`match`/`reason`/`tool`/`contextEscalation`) → `WARN policy: baseline "<id>"
+    customization not migrated (binary definition now applies)`. Makes the
+    intended §4.1 discard visible instead of silent.
   - Keep the load/validate/store/hook checks.
 
 ## 7. Web control-plane (W2)
@@ -253,7 +275,14 @@ to attach to) and surfaced by `doctor` (§6).
   re-scores against the **current** binary baselines — the correct semantics:
   "how would this policy behave on today's engine".
 - Old `policy_versions` snapshots (fat, inline baselines) are re-scored the same
-  way; no data migration of stored snapshots is performed.
+  way; no data migration of stored snapshots is performed. The same §4.1 caveat
+  applies: a snapshot's inline `enabled`/`severity` edits re-derive as overrides,
+  but a `match`/`contextEscalation` edit in a snapshot is not preserved — it
+  re-scores against the current binary baseline. This is consistent with the load
+  path (same `normalize`), so it is a property, not a separate defect.
+- The **CLI** `replay --version N` path (`cmd/argus/main.go`) must also route the
+  snapshot bytes through `EffectiveFromBytes`, not a bare `json.Unmarshal` into
+  `Policy` — otherwise a thin snapshot re-scores with no baselines.
 
 ## 9. Testing (TDD, table-driven; CLAUDE.md §Testing)
 

