@@ -3,7 +3,9 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/lucasngucii/argus/internal/policy"
@@ -30,8 +32,9 @@ func Doctor(home string, w io.Writer) int {
 
 	report("hook: PreToolUse -> argus gate wired in ~/.claude/settings.json", checkHook(home))
 	report("policy: policy.json loads and schema-validates", checkPolicy(home))
-	warnMissingSeedRules(home, w)
 	warnMissingMCPMatcher(home, w)
+	warnUnknownOverride(home, w)
+	warnBaselineDrift(home, w)
 
 	st, err := store.Open(filepath.Join(home, ".argus", "argus.db"))
 	report("store: argus.db opens and is writable", err)
@@ -62,31 +65,6 @@ func checkPolicy(home string) error {
 	return err
 }
 
-// warnMissingSeedRules prints a non-fatal WARN when the loaded policy is
-// missing any baseline seed rule — a user-edited policy silently losing its
-// default `medium` coverage. It does NOT change the exit code: the hard checks
-// still govern 0/non-0. A policy that fails to load is left to the policy check
-// above; there is nothing to compare here.
-func warnMissingSeedRules(home string, w io.Writer) {
-	pol, err := policy.Load(filepath.Join(home, ".argus", "policy.json"))
-	if err != nil {
-		return
-	}
-	present := make(map[string]bool, len(pol.Rules))
-	for _, r := range pol.Rules {
-		present[r.ID] = true
-	}
-	var missing []string
-	for _, id := range policy.SeedRuleIDs() {
-		if !present[id] {
-			missing = append(missing, id)
-		}
-	}
-	if len(missing) > 0 {
-		fmt.Fprintf(w, "WARN policy: missing baseline seed rules: %s\n", strings.Join(missing, ", "))
-	}
-}
-
 // warnMissingMCPMatcher prints a non-fatal WARN when the wired PreToolUse
 // matcher does not gate MCP tools (mcp__*) — an install from before MCP gating.
 // A re-run of `argus init` self-heals it. Does NOT change the exit code.
@@ -103,6 +81,45 @@ func warnMissingMCPMatcher(home string, w io.Writer) {
 	}
 	if m, _ := e["matcher"].(string); !strings.Contains(m, "mcp__") {
 		fmt.Fprintln(w, "WARN hook: PreToolUse matcher does not gate MCP tools (mcp__*) — re-run 'argus init' to update it")
+	}
+}
+
+// warnUnknownOverride prints a non-fatal WARN for any override that names a
+// rule id no current Baseline() carries — a stale override left after a rule was
+// renamed or removed. Baselines can no longer be "missing" (they come from the
+// binary), so this is the correctly-oriented drift check. Does NOT change exit.
+func warnUnknownOverride(home string, w io.Writer) {
+	f, err := policy.LoadFile(filepath.Join(home, ".argus", "policy.json"))
+	if err != nil {
+		return
+	}
+	known := map[string]bool{}
+	for _, id := range policy.SeedRuleIDs() {
+		known[id] = true
+	}
+	var unknown []string
+	for id := range f.Overrides {
+		if !known[id] {
+			unknown = append(unknown, id)
+		}
+	}
+	sort.Strings(unknown) // deterministic output
+	if len(unknown) > 0 {
+		fmt.Fprintf(w, "WARN policy: override references unknown baseline rule: %s\n", strings.Join(unknown, ", "))
+	}
+}
+
+// warnBaselineDrift prints a non-fatal WARN when the raw policy file carries an
+// inline baseline copy customized in a field normalize cannot migrate (match /
+// reason / tool / contextEscalation) — surfacing the intended discard so an
+// operator's superseded hand-edit is visible. Does NOT change exit.
+func warnBaselineDrift(home string, w io.Writer) {
+	b, err := os.ReadFile(filepath.Join(home, ".argus", "policy.json"))
+	if err != nil {
+		return
+	}
+	if ids := policy.BaselineDriftIDs(b); len(ids) > 0 {
+		fmt.Fprintf(w, "WARN policy: baseline customization not migrated (binary definition now applies): %s\n", strings.Join(ids, ", "))
 	}
 }
 

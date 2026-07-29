@@ -15,12 +15,20 @@ const leadBoundary = `(^|[\s;&|("'/])`
 // doesn't cover the metacharacter sitting directly against the path.
 const trailBoundary = `(/|[\s;&|)"']|$)`
 
-// Default returns the seed policy Argus ships with. It intentionally does
-// not embed Floor(): the classifier applies the floor as a separate pass on
-// every decision, so embedding it here would double-evaluate it.
+// Default returns the effective policy with no overrides (baseline only) —
+// the fail-closed fallback for a missing/unreadable policy.json (gate, web
+// explain).
 func Default() Policy {
-	p := Policy{Version: 1, Meta: map[string]string{"seed": "agent-review v2"}}
-	p.Rules = []Rule{
+	return File{Version: 1}.Effective()
+}
+
+// Baseline returns the binary-owned seed rules — the medium-severity "ask"
+// coverage every install gets, reassembled from the binary on every load so
+// a newer binary's rules reach existing installs without a re-init. Like
+// Floor(), it is never stored in policy.json; the file carries only
+// per-baseline overrides (see File) and user rules.
+func Baseline() []Rule {
+	return []Rule{
 		{ID: "rm-recursive", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "rm -r directory",
 			Match:             Match{Cmd: []string{"rm"}, Flags: []string{"r"}, TargetScorer: "rm_target"},
 			ContextEscalation: []Escalation{{When: Condition{CWDMatches: "prod"}, To: "high"}}},
@@ -102,7 +110,6 @@ func Default() Policy {
 					`|/etc/sudoers\b`},
 			Reason: "MCP read-op targeting a credential/system/self-protect path"},
 	}
-	return p
 }
 
 // Floor returns the built-in always-high rules no policy or allowlist can

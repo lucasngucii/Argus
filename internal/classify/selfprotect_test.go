@@ -16,6 +16,9 @@ func TestCannotDisarm(t *testing.T) {
 		{ToolName: "Write", ToolInput: hook.ToolInput{FilePath: "/Users/x/.claude/settings.json"}},
 		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm -f /home/y/.argus/policy.json"}},
 		{ToolName: "Edit", ToolInput: hook.ToolInput{FilePath: "/root/.argus/argus.db"}},
+		// The background-serve pid file lives under .argus/, so faking it dead
+		// to spawn a rogue server must not be a low-severity write.
+		{ToolName: "Write", ToolInput: hook.ToolInput{FilePath: "/home/y/.argus/argus.pid"}},
 	}
 	for _, p := range cases {
 		if Classify(p, pol).Severity != "high" {

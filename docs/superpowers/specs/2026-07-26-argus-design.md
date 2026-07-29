@@ -268,10 +268,21 @@ Only possible because Argus keeps history + full policy snapshots:
 - **Plan 2 — web control-plane:** `serve`, `replay` (CLI + simulator UI), live tail, stats, policy editor, explain view. `replay` and the close-the-loop allowlist **UI** ship here; the engine-level downgrade mechanism and `policy_versions` write path land in Plan 1 so the data model is correct from the start.
 - **Plan 3 — distribution:** npm (optionalDeps + fallback) + GitHub Releases.
 
-**Roadmap** (explicitly out of v1)
-- Gate **MCP tool calls** (`mcp__*`) — new attack surface.
-- **Multi-harness** (Codex, Gemini) governance.
-- Rule suggestions from history; fleet / multi-machine aggregation; community policy packs; secret-content scanning on writes; `high`-block notifications (Slack/desktop).
+**Delivered post-v1**
+- **Phase 4A — MCP tool-call gating** (`mcp__*`): classified on the same ladder, floor rule for file-ops on sensitive paths, mutating-tool + destructive-SQL seed rules, persisted + replayable MCP subjects. (plan `2026-07-28-mcp-gating.md`)
+- Research-backed rule expansion (grep-exfil, useradd-privileged, pkg-install-lifecycle, rc-file-inject) + opt-in infra policy pack.
+- `argus init --help`, detached/auto-daemonized `serve`, background-serve pidfile self-protection.
+
+**Next phase — 4B: Binary-owned baseline rules + thin override layer** *(spec'd — `2026-07-29-binary-owned-baselines-design.md`)*
+- **Driver: eliminate stale policy after an update.** Baseline seed rules become binary-owned like the floor (reassembled every load), so a newer binary's rules reach existing installs with no re-`init` and no hot-path write. `policy.json` shrinks to a thin `overrides` (`enabled`/`severity` per baseline) + user rules layer; a single `normalize` step migrates old fat files in-memory (edits preserved as overrides). Web editor gains a structured overrides UI.
+
+**Later — Multi-harness (Codex, Gemini)** *(not yet spec'd)*
+- **Driver: stability + reach.** The pure engine already works across harnesses; only the two dirty-shell edges are Claude-Code-specific — `init` hook wiring, and the `PreToolUse` payload shape. Adds a payload adapter per harness (map their tool-call JSON → the internal struct) and per-harness `init` wiring, leaving `classify(payload, policy)` untouched.
+- **Prerequisite before spec:** survey the real hook mechanism of Codex and Gemini CLI — do they expose a synchronous pre-tool decision hook? what is the payload shape? where does config live? Then: design spec → implementation plan → TDD, per repo convention.
+- Note: the store already carries a `Harness` field, so the data model is ready.
+
+**Later roadmap** (unscheduled)
+- Rule suggestions from history; fleet / multi-machine aggregation; community policy packs (per-MCP-server packs, e.g. a "github MCP" pack); secret-content scanning on writes; `high`-block notifications (Slack/desktop).
 
 ---
 

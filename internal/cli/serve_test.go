@@ -60,6 +60,39 @@ func TestServe_BadAddrReturnsNonZero(t *testing.T) {
 	}
 }
 
+// TestServe_WritesAndRemovesPID proves the serving process owns the pid file:
+// it appears once the server is bound and is gone after a clean shutdown, so a
+// spawner's liveness check reflects the true serving process.
+func TestServe_WritesAndRemovesPID(t *testing.T) {
+	home := argusHome(t)
+	if st, err := store.Open(filepath.Join(home, ".argus", "argus.db")); err != nil {
+		t.Fatalf("seed store: %v", err)
+	} else {
+		st.Close()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	w := &syncBuf{}
+	done := make(chan int, 1)
+	go func() { done <- Serve(ctx, home, "127.0.0.1:0", w) }()
+	waitForURL(t, w)
+
+	pid, err := readPID(home)
+	if err != nil {
+		t.Fatalf("pid file missing while serving: %v", err)
+	}
+	if pid != os.Getpid() {
+		t.Fatalf("pid file = %d, want serving process %d", pid, os.Getpid())
+	}
+
+	cancel()
+	<-done
+
+	if _, err := readPID(home); !os.IsNotExist(err) {
+		t.Fatalf("pid file after shutdown = %v, want removed", err)
+	}
+}
+
 // TestServe_ServesThenShutsDownAndCloses proves the full wiring: it serves over
 // an ephemeral loopback port, answers /api/stats while an SSE client is open,
 // returns promptly on ctx-cancel (SSE does not block shutdown), and releases

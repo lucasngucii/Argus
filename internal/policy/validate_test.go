@@ -40,6 +40,20 @@ func TestSeedRuleIDsMatchesDefault(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsOverrides(t *testing.T) {
+	doc := []byte(`{"version":1,"overrides":{"sudo":{"enabled":false},"npm-x":{"severity":"low"}},"rules":[]}`)
+	if err := Validate(doc); err != nil {
+		t.Fatalf("valid overrides doc rejected: %v", err)
+	}
+}
+
+func TestValidateRejectsBadOverrideSeverity(t *testing.T) {
+	doc := []byte(`{"version":1,"overrides":{"sudo":{"severity":"nope"}},"rules":[]}`)
+	if err := Validate(doc); err == nil {
+		t.Fatal("override severity outside the enum must be rejected")
+	}
+}
+
 func TestValidateAndDecodeMCPMatch(t *testing.T) {
 	doc := []byte(`{"version":1,"rules":[{"id":"m","tool":["mcp"],"reason":"x","match":{"mcpServer":["github"],"mcpTool":"(?i)delete"}}]}`)
 	if err := Validate(doc); err != nil {

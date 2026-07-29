@@ -1,6 +1,9 @@
 package policy
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 // TestFloorRulesPinHigh asserts every floor rule can pin the high floor, by
 // one of the two sanctioned mechanisms: an AlwaysHigh+high rule (pins
@@ -25,6 +28,28 @@ func TestDefaultDoesNotEmbedFloor(t *testing.T) {
 		if r.AlwaysHigh {
 			t.Fatal("Default() must not embed floor rules (classifier owns them)")
 		}
+	}
+}
+
+func TestLoadOldFileGivesCurrentBaseline(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/policy.json"
+	// A minimal old file with NO mcp-mutating-tool inline (a stale install).
+	if err := os.WriteFile(path, []byte(`{"version":2,"rules":[
+	  {"id":"sudo","enabled":true,"severity":"medium","tool":["Bash"],"reason":"sudo","match":{"cmd":["sudo"]}}
+	]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pol, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, r := range pol.Rules {
+		got[r.ID] = true
+	}
+	if !got["mcp-mutating-tool"] {
+		t.Error("a stale old file must still get the current binary baseline (mcp-mutating-tool)")
 	}
 }
 

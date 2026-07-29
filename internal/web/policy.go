@@ -142,7 +142,7 @@ func (srv *Server) getPolicyVersion(w http.ResponseWriter, r *http.Request) {
 func (srv *Server) currentPolicyText() (string, error) {
 	b, err := os.ReadFile(srv.policyPath)
 	if errors.Is(err, os.ErrNotExist) {
-		def, mErr := json.MarshalIndent(policy.Default(), "", "  ")
+		def, mErr := json.MarshalIndent(policy.DefaultFile(), "", "  ")
 		if mErr != nil {
 			return "", mErr
 		}

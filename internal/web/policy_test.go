@@ -132,3 +132,33 @@ func TestPolicy_GetReturnsJSONAndVersions(t *testing.T) {
 		t.Errorf("snapshot body missing policy text: %s", rec.Body.String())
 	}
 }
+
+func TestPolicy_GetMissingFileReturnsThinDefault(t *testing.T) {
+	srv, err := testServer(t, "127.0.0.1:4601")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// no os.WriteFile — policy.json does not exist
+	req := httptest.NewRequest(http.MethodGet, "/api/policy", nil)
+	req.Host = "127.0.0.1:4601"
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/policy: %d", rec.Code)
+	}
+	var res struct {
+		JSON string `json:"json"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rules []any `json:"rules"`
+	}
+	if err := json.Unmarshal([]byte(res.JSON), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Rules) != 0 {
+		t.Errorf("missing-file default must be thin (0 rules), got %d", len(doc.Rules))
+	}
+}
