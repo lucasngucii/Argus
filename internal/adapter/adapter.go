@@ -5,7 +5,12 @@
 // verdict so it stays a cycle-free leaf.
 package adapter
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+
+	"github.com/lucasngucii/argus/internal/hook"
+)
 
 // Outcome is what an adapter serializes: the verdict Gate decided to emit
 // (post-shadow — shadow mode sets Verdict to "allow") and its reason. It
@@ -27,5 +32,16 @@ func Canonical(name string) (string, error) {
 		return "claude-code", nil
 	default:
 		return "", fmt.Errorf("unknown harness %q", name)
+	}
+}
+
+// Parse turns a harness's raw PreToolUse payload into the normalized
+// hook.Payload the classifier consumes. Unknown name → fail-closed error.
+func Parse(name string, r io.Reader) (hook.Payload, error) {
+	switch name {
+	case "claude-code":
+		return claudecodeParse(r)
+	default:
+		return hook.Payload{}, fmt.Errorf("parse: unknown harness %q", name)
 	}
 }
