@@ -45,3 +45,19 @@ func Parse(name string, r io.Reader) (hook.Payload, error) {
 		return hook.Payload{}, fmt.Errorf("parse: unknown harness %q", name)
 	}
 }
+
+// Emit serializes o for the harness and returns the process exit code: 0 on a
+// successful write, 2 when the write fails or the harness is unknown. Fail-closed
+// via exit code 2 is the only portable "do not proceed" signal when we cannot
+// write (or cannot speak) the harness's protocol — an unknown harness must not
+// emit some other harness's format, which that harness would ignore while the
+// tool runs. An adapter may only translate a verdict more-restrictive (allow →
+// ask → deny), never looser.
+func Emit(name string, w io.Writer, o Outcome) int {
+	switch name {
+	case "claude-code":
+		return claudecodeEmit(w, o)
+	default:
+		return 2
+	}
+}
