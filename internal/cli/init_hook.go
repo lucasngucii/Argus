@@ -14,6 +14,11 @@ import (
 // wrapper around the same binary still counts as "already wired".
 const gateCommand = "argus gate"
 
+// gateWireCommand is what fresh wiring writes: the match constant plus the
+// explicit harness flag. It MUST contain gateCommand as a substring so
+// gateEntry/doctor recognize it and stay idempotent.
+const gateWireCommand = gateCommand + " --harness=claude-code"
+
 // wiredMatcher is the PreToolUse matcher wired by fresh init. It gates Bash,
 // Write, and Edit commands, plus MCP tools (mcp__*).
 const wiredMatcher = "Bash|Write|Edit|mcp__.*"
@@ -59,7 +64,7 @@ func wireHook(home string) error {
 	hooks["PreToolUse"] = append(preToolUse, map[string]any{
 		"matcher": wiredMatcher,
 		"hooks": []any{
-			map[string]any{"type": "command", "command": gateCommand},
+			map[string]any{"type": "command", "command": gateWireCommand},
 		},
 	})
 	return writeSettings(path, settings)
