@@ -23,11 +23,14 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "gate":
+		fs := flag.NewFlagSet("gate", flag.ExitOnError)
+		harness := fs.String("harness", "", "agent harness this gate serves (default claude-code)")
+		fs.Parse(os.Args[2:])
 		home, err := os.UserHomeDir()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "argus: user home dir: %v\n", err)
 		}
-		os.Exit(cli.Gate(os.Stdin, os.Stdout, home))
+		os.Exit(cli.Gate(os.Stdin, os.Stdout, home, *harness))
 	case "init":
 		home, err := os.UserHomeDir()
 		if err != nil {
