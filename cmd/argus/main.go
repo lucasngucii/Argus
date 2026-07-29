@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -164,14 +163,7 @@ func replayCandidate(st *store.Store, home, policyPath string, ver int) (policy.
 		if err != nil {
 			return policy.Policy{}, fmt.Errorf("policy version %d: %w", ver, err)
 		}
-		if err := policy.Validate([]byte(raw)); err != nil {
-			return policy.Policy{}, fmt.Errorf("policy version %d: %w", ver, err)
-		}
-		var p policy.Policy
-		if err := json.Unmarshal([]byte(raw), &p); err != nil {
-			return policy.Policy{}, fmt.Errorf("policy version %d: decode: %w", ver, err)
-		}
-		return p, nil
+		return policy.EffectiveFromBytes([]byte(raw)) // validates + normalizes + assembles
 	}
 	if policyPath == "" {
 		policyPath = filepath.Join(home, ".argus", "policy.json")

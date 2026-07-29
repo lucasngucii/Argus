@@ -98,10 +98,10 @@ func (srv *Server) handleAllowlist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pol := srv.loadPolicy()
-	pol.Rules = append(pol.Rules, allowRule(req))
+	f := srv.loadFile()
+	f.Rules = append(f.Rules, allowRule(req))
 
-	body, err := json.Marshal(pol)
+	body, err := json.Marshal(f)
 	if err != nil {
 		serverError(w, "marshal policy", err)
 		return
@@ -155,14 +155,7 @@ func shortHash(s string) string {
 // parsePolicy schema-validates then decodes a candidate policy document — the
 // shared "bytes to Policy" path for endpoints that need the parsed value.
 func parsePolicy(body []byte) (policy.Policy, error) {
-	if err := policy.Validate(body); err != nil {
-		return policy.Policy{}, err
-	}
-	var p policy.Policy
-	if err := json.Unmarshal(body, &p); err != nil {
-		return policy.Policy{}, err
-	}
-	return p, nil
+	return policy.EffectiveFromBytes(body)
 }
 
 // toReplayResponse maps the engine Result to the camelCase API view.

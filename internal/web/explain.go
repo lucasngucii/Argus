@@ -88,6 +88,18 @@ func (srv *Server) loadPolicy() policy.Policy {
 	return pol
 }
 
+// loadFile returns the current thin policy File (overrides + user rules) for the
+// endpoints that re-serialize the document — never the effective Policy, which
+// would write the baselines back into the file. A missing file yields the thin
+// default.
+func (srv *Server) loadFile() policy.File {
+	f, err := policy.LoadFile(srv.policyPath)
+	if err != nil {
+		return policy.DefaultFile()
+	}
+	return f
+}
+
 // renderCommands formats the resolved AST commands as `name arg1 arg2` strings
 // so a reader sees the same argv the classifier judged. Always non-nil so the
 // JSON field is [] rather than null.

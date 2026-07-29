@@ -3,6 +3,9 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/lucasngucii/argus/internal/policy"
@@ -102,5 +105,42 @@ func TestAllowlistHandler_FloorStaysDenied(t *testing.T) {
 	}
 	if v := explainVerdict(t, srv, "sudo rm -rf /", "Bash"); v.Verdict != "deny" {
 		t.Fatalf("floor after allowlist = %s/%s, want still deny", v.Severity, v.Verdict)
+	}
+}
+
+// TestAllowlistPersistsThinFile proves the allowlist handler writes back the
+// thin policy File (overrides + user rules), never the effective Policy —
+// otherwise baseline rules like sudo/git-danger would get re-fattened into
+// policy.json.
+func TestAllowlistPersistsThinFile(t *testing.T) {
+	srv, err := testServer(t, "127.0.0.1:4600")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"tool":"Bash","command":"echo hi"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/allowlist", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Argus-CSRF", "1")
+	req.Host = "127.0.0.1:4600"
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("allowlist POST: %d %s", rec.Code, rec.Body.String())
+	}
+	written, err := os.ReadFile(srv.policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f policy.File
+	if err := json.Unmarshal(written, &f); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range f.Rules {
+		if r.ID == "sudo" || r.ID == "git-danger" {
+			t.Fatalf("baseline %q must NOT be written back into the file", r.ID)
+		}
+	}
+	if len(f.Rules) != 1 || !f.Rules[0].Allow {
+		t.Errorf("expected exactly the new allow rule, got %+v", f.Rules)
 	}
 }
