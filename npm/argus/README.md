@@ -53,3 +53,5 @@ rule: git-danger      severity: medium   verdict: ask
 
 Full docs, the policy-authoring guide, and the research behind the built-in
 rules: <https://github.com/lucasngucii/Argus>. MIT licensed.
+
+Changelog: <https://github.com/lucasngucii/Argus/blob/main/CHANGELOG.md>.

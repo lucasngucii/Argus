@@ -110,6 +110,10 @@ go build ./... && go test ./...
 Pure-Go deps only: `mvdan/sh`, `modernc.org/sqlite`, `jsonschema`. Design specs
 and implementation plans live under [`docs/`](docs/).
 
+## Changelog
+
+See [`CHANGELOG.md`](CHANGELOG.md).
+
 ## License
 
 [MIT](LICENSE).
