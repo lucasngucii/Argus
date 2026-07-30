@@ -158,3 +158,17 @@ func TestArithmTestLetCmdSubstObfuscates(t *testing.T) {
 		}
 	}
 }
+
+func TestRedirectAndHeredocCmdSubstObfuscates(t *testing.T) {
+	if !Extract("cat < $(rm -rf /)").Obfuscated {
+		t.Fatal("command substitution in a redirect target must set Obfuscated")
+	}
+	hdoc := "cat <<EOF\n$(rm -rf /)\nEOF\n"
+	if !Extract(hdoc).Obfuscated {
+		t.Fatal("command substitution in a heredoc body must set Obfuscated")
+	}
+	// Negative: a plain redirect/heredoc must stay clean.
+	if Extract("cat < myfile").Obfuscated {
+		t.Fatal("plain redirect must not be obfuscated")
+	}
+}

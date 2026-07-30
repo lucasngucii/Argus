@@ -82,8 +82,16 @@ func processStmt(stmt *syntax.Stmt, vars map[string]string, f *Facts) {
 	}
 	for _, r := range stmt.Redirs {
 		if r.Word != nil {
-			text, _ := resolveWord(r.Word, vars)
+			text, ok := resolveWord(r.Word, vars)
+			if !ok {
+				f.Obfuscated = true // e.g. `cat < $(cmd)` — the sub executes
+			}
 			f.Redirects = append(f.Redirects, text)
+		}
+		if r.Hdoc != nil {
+			if _, ok := resolveWord(r.Hdoc, vars); !ok {
+				f.Obfuscated = true // `$(cmd)` in a heredoc body executes
+			}
 		}
 	}
 	switch c := stmt.Cmd.(type) {
