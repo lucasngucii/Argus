@@ -14,6 +14,11 @@ import (
 // wrapper around the same binary still counts as "already wired".
 const gateCommand = "argus gate"
 
+// gateWireCommand is what fresh wiring writes: the match constant plus the
+// explicit harness flag. It MUST contain gateCommand as a substring so
+// gateEntry/doctor recognize it and stay idempotent.
+const gateWireCommand = gateCommand + " --harness=claude-code"
+
 // wiredMatcher is the PreToolUse matcher wired by fresh init. It gates Bash,
 // Write, and Edit commands, plus MCP tools (mcp__*).
 const wiredMatcher = "Bash|Write|Edit|mcp__.*"
@@ -59,7 +64,7 @@ func wireHook(home string) error {
 	hooks["PreToolUse"] = append(preToolUse, map[string]any{
 		"matcher": wiredMatcher,
 		"hooks": []any{
-			map[string]any{"type": "command", "command": gateCommand},
+			map[string]any{"type": "command", "command": gateWireCommand},
 		},
 	})
 	return writeSettings(path, settings)
@@ -99,11 +104,14 @@ func writeSettings(path string, settings map[string]any) error {
 	return nil
 }
 
-// gateEntry returns the PreToolUse entry map whose inner hook runs the argus
-// gate command, or nil if none exists.
-func gateEntry(preToolUse []any) map[string]any {
-	for _, entry := range preToolUse {
-		m, ok := entry.(map[string]any)
+// matchedGateHook scans PreToolUse once for the entry whose inner hook runs
+// the argus gate command, returning both that outer entry and the matched
+// command string together — so callers needing either or both never rescan
+// the same hook list twice with the same predicate. Returns (nil, "") if none
+// exists.
+func matchedGateHook(preToolUse []any) (entry map[string]any, command string) {
+	for _, e := range preToolUse {
+		m, ok := e.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -114,11 +122,18 @@ func gateEntry(preToolUse []any) map[string]any {
 				continue
 			}
 			if cmd, _ := hm["command"].(string); strings.Contains(cmd, gateCommand) {
-				return m
+				return m, cmd
 			}
 		}
 	}
-	return nil
+	return nil, ""
+}
+
+// gateEntry returns the PreToolUse entry map whose inner hook runs the argus
+// gate command, or nil if none exists.
+func gateEntry(preToolUse []any) map[string]any {
+	entry, _ := matchedGateHook(preToolUse)
+	return entry
 }
 
 // hasGateHook reports whether any PreToolUse entry already runs the argus

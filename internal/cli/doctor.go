@@ -30,7 +30,7 @@ func Doctor(home string, w io.Writer) int {
 		fmt.Fprintf(w, "PASS %s\n", label)
 	}
 
-	report("hook: PreToolUse -> argus gate wired in ~/.claude/settings.json", checkHook(home))
+	report("hook: PreToolUse -> argus gate wired in ~/.claude/settings.json", Probe("claude-code", home))
 	report("policy: policy.json loads and schema-validates", checkPolicy(home))
 	warnMissingMCPMatcher(home, w)
 	warnUnknownOverride(home, w)

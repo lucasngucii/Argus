@@ -40,7 +40,7 @@ func Init(home string) error {
 		return err
 	}
 
-	if err := wireHook(home); err != nil {
+	if err := Wire("claude-code", home); err != nil {
 		return err
 	}
 

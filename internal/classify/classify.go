@@ -64,6 +64,21 @@ func hasDangerToken(s string) bool {
 	return false
 }
 
+// effectiveTool returns the tool label rule dispatch matches against. It
+// mirrors hook.Payload.Subject()'s judgment (CLAUDE.md §2): a non-MCP payload
+// carrying a shell Command is Bash-shaped regardless of how (or whether) its
+// tool_name was spelled. Without this, a missing or mis-cased tool_name would
+// make Subject() correctly resolve to the dangerous command while every
+// Bash-gated rule still silently fails to fire, because Matches/toolIn gate
+// on an exact tool_name match — reopening the same fail-open Subject() closes,
+// one layer down.
+func effectiveTool(p hook.Payload) string {
+	if !p.IsMCP() && p.ToolInput.Command != "" {
+		return "Bash"
+	}
+	return p.ToolName
+}
+
 // Classify decides the severity of a tool invocation against a policy. It is
 // pure: no I/O, no clock, no globals mutated, and it never panics (CLAUDE.md
 // §1). Severity is the max over matched non-Allow rules; an AlwaysHigh match
@@ -71,6 +86,7 @@ func hasDangerToken(s string) bool {
 // (§4). Obfuscation/parse failure and broken policy regexes escalate a
 // visibly dangerous command rather than letting it slip through (§2).
 func Classify(p hook.Payload, pol policy.Policy) Decision {
+	tool := effectiveTool(p)
 	f := shellast.Extract(p.Subject())
 	best := Decision{Severity: "safe", Reason: "safe"}
 	floorHit := false
@@ -81,7 +97,7 @@ func Classify(p hook.Payload, pol policy.Policy) Decision {
 			if !r.Enabled || r.Allow {
 				continue
 			}
-			ok, rerr := Matches(p.ToolName, p.Subject(), f, r)
+			ok, rerr := Matches(tool, p.Subject(), f, r)
 			if rerr {
 				regexBroke = true
 			}

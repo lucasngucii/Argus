@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/lucasngucii/argus/internal/adapter"
 	"github.com/lucasngucii/argus/internal/classify"
 	"github.com/lucasngucii/argus/internal/hook"
 	"github.com/lucasngucii/argus/internal/policy"
@@ -14,36 +15,42 @@ import (
 	"github.com/lucasngucii/argus/internal/verdict"
 )
 
-// Gate is the synchronous hot path Claude Code invokes as a PreToolUse
-// hook: parse -> classify -> best-effort record -> emit. In the normal
-// case blocking happens via the emitted JSON's permissionDecision, not the
-// process exit code, so Gate returns 0. It returns 2 only when the stdout
-// emit itself fails (broken pipe / closed fd): with no hookSpecificOutput
-// on stdout, Claude Code would treat that as "no opinion" and run the tool
-// unprompted in bypassPermissions, so a failed emit must fail-closed via
-// the exit code instead (see emitOrBlock). A top-level recover fail-closes
-// to "deny" so a bug anywhere in this path can never silently allow a
-// dangerous command (CLAUDE.md §2).
-func Gate(stdin io.Reader, stdout io.Writer, home string) (code int) {
+// Gate is the synchronous PreToolUse hot path. It resolves the harness, parses,
+// classifies, best-effort records, and emits through the per-harness adapter.
+// Every terminal path funnels an explicit Outcome into a SINGLE adapter.Emit
+// call; the deferred recover is the only other Emit caller and assigns its exit
+// code to the named return. A top-level recover fail-closes to deny so a bug on
+// this path can never silently allow a dangerous command (CLAUDE.md §2).
+func Gate(stdin io.Reader, stdout io.Writer, home, harness string) (code int) {
+	var name string // captured by the recover closure; "" → Emit default → exit 2
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "argus: gate: recovered panic: %v\n", r)
-			if !emitOrBlock(stdout, "deny", "internal error (fail-closed)") {
-				code = 2
-				return
-			}
-			code = 0
+			code = adapter.Emit(name, stdout, adapter.Outcome{Verdict: "deny", Reason: "internal error (fail-closed)"})
 		}
 	}()
 
-	payload, err := hook.Parse(stdin)
+	name, err := adapter.Canonical(harness)
+	if err != nil {
+		// Unknown harness: we cannot speak its protocol, so emit nothing and
+		// fail closed via a non-zero exit — the only portable "do not proceed".
+		fmt.Fprintf(os.Stderr, "argus: gate: %v\n", err)
+		return 2
+	}
+
+	return adapter.Emit(name, stdout, decide(stdin, home, name))
+}
+
+// decide runs the parse -> classify -> record pipeline and returns the Outcome
+// to emit. A parse failure funnels an explicit deny (never a zero-value
+// Outcome, which would serialize an empty verdict Claude Code treats as
+// no-opinion). Shadow mode records the real verdict but emits allow.
+func decide(stdin io.Reader, home, name string) adapter.Outcome {
+	payload, err := adapter.Parse(name, stdin)
 	if err != nil {
 		// Unparseable payload is itself an anomaly, not a benign no-op.
 		fmt.Fprintf(os.Stderr, "argus: gate: parse payload: %v\n", err)
-		if !emitOrBlock(stdout, "deny", "unparseable payload") {
-			return 2
-		}
-		return 0
+		return adapter.Outcome{Verdict: "deny", Reason: "unparseable payload"}
 	}
 
 	pol, err := policy.Load(home + "/.argus/policy.json")
@@ -58,43 +65,22 @@ func Gate(stdin io.Reader, stdout io.Writer, home string) (code int) {
 	mapped := verdict.Map(decision.Severity, payload.PermissionMode)
 
 	if decision.Severity != "safe" {
-		recordDecision(home, payload, pol, decision, mapped)
+		recordDecision(home, payload, pol, decision, mapped, name)
 	}
 
 	// Shadow mode observes without blocking: the DB keeps the real verdict
 	// (mapped, above), but stdout always reports allow.
-	emitted := mapped
 	if pol.Defaults.Shadow {
-		emitted = "allow"
+		return adapter.Outcome{Verdict: "allow", Reason: decision.Reason}
 	}
-
-	if !emitOrBlock(stdout, emitted, decision.Reason) {
-		return 2
-	}
-	return 0
-}
-
-// emitOrBlock writes v/reason to stdout via verdict.Emit and reports whether
-// the write succeeded. A failed emit is the one I/O path that can produce an
-// effective allow: Claude Code treats a hook with no hookSpecificOutput on
-// stdout as "no opinion" and, in bypassPermissions, runs the tool
-// unprompted. So the write failing must itself fail-closed — the caller
-// returns exit code 2, which the Claude Code hooks contract blocks the tool
-// call on (stderr is fed back instead of the now-unwritable stdout JSON),
-// in every permission mode including bypass.
-func emitOrBlock(stdout io.Writer, v, reason string) bool {
-	if err := verdict.Emit(stdout, v, reason); err != nil {
-		fmt.Fprintf(os.Stderr, "argus: gate: emit verdict: %v\n", err)
-		return false
-	}
-	return true
+	return adapter.Outcome{Verdict: mapped, Reason: decision.Reason}
 }
 
 // recordDecision persists a non-safe decision. It is best-effort: store
 // errors are logged to stderr and otherwise ignored, and the whole call is
 // wrapped in its own recover — a logging bug must never reach the caller or
 // change the verdict already computed in Gate (CLAUDE.md §3).
-func recordDecision(home string, p hook.Payload, pol policy.Policy, d classify.Decision, mappedVerdict string) {
+func recordDecision(home string, p hook.Payload, pol policy.Policy, d classify.Decision, mappedVerdict, harness string) {
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "argus: gate: recovered panic recording decision: %v\n", r)
@@ -118,7 +104,7 @@ func recordDecision(home string, p hook.Payload, pol policy.Policy, d classify.D
 		Verdict:        mappedVerdict,
 		PermissionMode: p.PermissionMode,
 		RuleID:         d.RuleID,
-		Harness:        "claude-code",
+		Harness:        harness,
 		PolicyVersion:  pol.Version,
 		Obfuscation:    d.Obfuscated,
 	}

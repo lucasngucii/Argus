@@ -49,6 +49,30 @@ func TestBashMistypedCommandFailsClosed(t *testing.T) {
 	}
 }
 
+func TestSubjectMissingToolNameWithCommandIsCommand(t *testing.T) {
+	// fail-open regression: a missing tool_name must not hide a real command
+	// behind an empty subject — judge on Command presence, not tool_name.
+	p, err := Parse(strings.NewReader(`{"tool_input":{"command":"rm -rf /"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Subject() != "rm -rf /" {
+		t.Fatalf("subject=%q, want the command", p.Subject())
+	}
+}
+
+func TestSubjectLowercaseToolNameWithCommandIsCommand(t *testing.T) {
+	// fail-open regression: a mis-cased tool_name ("bash" vs "Bash") must not
+	// hide a real command behind an empty subject.
+	p, err := Parse(strings.NewReader(`{"tool_name":"bash","tool_input":{"command":"rm -rf /"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Subject() != "rm -rf /" {
+		t.Fatalf("subject=%q, want the command", p.Subject())
+	}
+}
+
 func TestMCPTolerantArgs(t *testing.T) {
 	// an MCP tool whose args happen to have a non-string "command" must NOT error — classify on Raw instead.
 	p, err := Parse(strings.NewReader(`{"tool_name":"mcp__shell__run","tool_input":{"command":["ls","-la"]}}`))

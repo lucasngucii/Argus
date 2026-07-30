@@ -18,6 +18,21 @@ func mcp(name, argsJSON string) hook.Payload {
 	return hook.Payload{ToolName: name, PermissionMode: "default", ToolInput: hook.ToolInput{Raw: json.RawMessage(argsJSON)}}
 }
 
+// TestMissingToolNameCommandStillDenied is the classify-level pin for the
+// Payload.Subject() fail-open fix: a missing or mis-cased tool_name must not
+// make a dangerous command's subject resolve to empty and classify safe.
+func TestMissingToolNameCommandStillDenied(t *testing.T) {
+	cases := []hook.Payload{
+		{ToolInput: hook.ToolInput{Command: "rm -rf /"}},                   // tool_name absent
+		{ToolName: "bash", ToolInput: hook.ToolInput{Command: "rm -rf /"}}, // mis-cased
+	}
+	for _, p := range cases {
+		if got := Classify(p, policy.Default()).Severity; got != "high" {
+			t.Fatalf("tool_name=%q: rm -rf / must be high, got %s", p.ToolName, got)
+		}
+	}
+}
+
 func TestSudoRmIsHigh(t *testing.T) {
 	if sev("sudo rm -rf /", "/tmp") != "high" {
 		t.Fatal(sev("sudo rm -rf /", "/tmp"))
@@ -197,6 +212,22 @@ func TestRcFileInjectIsMedium(t *testing.T) {
 		t.Fatal("overwrite .zshrc must be medium")
 	}
 }
+
+// TestRcFileInjectCaseInsensitive closes the same case-insensitive-filesystem
+// bypass fixed on the self-protect/credential rules (spec:
+// 2026-07-30-selfprotect-case-insensitivity-fix.md, round-4 amendment):
+// ~/.bashrc and ~/.BASHRC name the same file on a case-insensitive filesystem
+// (macOS/Windows), so an uppercase rc filename must not evade the redirect
+// check either.
+func TestRcFileInjectCaseInsensitive(t *testing.T) {
+	if sev("echo 'evil' >> ~/.BASHRC", "/tmp") != "medium" {
+		t.Fatalf("append to .BASHRC must be medium, got %s", sev("echo 'evil' >> ~/.BASHRC", "/tmp"))
+	}
+	if sev("printf 'x' > /home/dev/.Zshrc", "/tmp") != "medium" {
+		t.Fatal("overwrite .Zshrc must be medium")
+	}
+}
+
 func TestRcFileReadNotFlagged(t *testing.T) {
 	for _, c := range []string{"cat ~/.bashrc", "source ~/.bashrc"} {
 		if sev(c, "/tmp") != "safe" {
@@ -232,6 +263,23 @@ func TestMCPFileopSensitivePathIsHighFloor(t *testing.T) {
 		}
 	}
 }
+
+// TestMCPFileopSensitivePathCaseInsensitive pins the case-insensitivity fix
+// (docs/superpowers/specs/2026-07-30-selfprotect-case-insensitivity-fix.md):
+// ~/.claude/settings.json and ~/.CLAUDE/Settings.json name the same file on a
+// case-insensitive filesystem, so an alternate-case path must still hit the
+// mcp-fileop-sensitive-path floor. Both the directory AND the file segment
+// are cased differently here: varying only the filename (as in the spec's
+// literal example) is NOT diagnostic for this rule, because its `.claude`
+// alternative uses trailBoundary (any subpath), so a lowercase ".claude"
+// segment alone already floors regardless of what follows — the directory
+// casing must also flip to actually exercise the fix.
+func TestMCPFileopSensitivePathCaseInsensitive(t *testing.T) {
+	if got := Classify(mcp("mcp__fs__write_file", `{"path":"/home/x/.CLAUDE/Settings.json","content":"k"}`), policy.Default()).Severity; got != "high" {
+		t.Fatalf("case-insensitive mcp-fileop-sensitive-path bypass, got %s", got)
+	}
+}
+
 func TestMCPSearchMentioningPathNotFloored(t *testing.T) {
 	// the FP the AND-gate prevents: a non-file-op tool whose args merely MENTION a path.
 	if got := Classify(mcp("mcp__docs__search", `{"query":"how do I rotate /home/x/.ssh/id_rsa"}`), policy.Default()).Severity; got == "high" {
@@ -287,6 +335,17 @@ func TestMCPReadSensitivePathIsMedium(t *testing.T) {
 	}
 }
 
+// TestMCPReadSensitivePathCaseInsensitive pins the case-insensitivity fix
+// (docs/superpowers/specs/2026-07-30-selfprotect-case-insensitivity-fix.md):
+// ~/.aws/credentials and ~/.AWS/credentials name the same file on a
+// case-insensitive filesystem, so a read-verb MCP tool over the alternate-case
+// path must still ask (medium).
+func TestMCPReadSensitivePathCaseInsensitive(t *testing.T) {
+	if got := Classify(mcp("mcp__fs__read_file", `{"path":"/home/x/.AWS/credentials"}`), policy.Default()).Severity; got != "medium" {
+		t.Fatalf("case-insensitive mcp-read-sensitive-path bypass, got %s", got)
+	}
+}
+
 // TestMCPReadBenignPathIsSafe guards the FP boundary: the same read verbs over
 // an ordinary path stay safe — the rule fires only when the sensitive-path arm
 // also matches.
@@ -295,6 +354,26 @@ func TestMCPReadBenignPathIsSafe(t *testing.T) {
 		if got := Classify(mcp(n, `{"path":"/home/x/project/main.go"}`), policy.Default()).Severity; got != "safe" {
 			t.Fatalf("%s over a benign path must be safe, got %s", n, got)
 		}
+	}
+}
+
+// TestMCPReadShadowIsMedium locks in the /etc/shadow addition to
+// mcp-read-sensitive-path: shadow holds password hashes (real credential
+// material), so a read-verb MCP tool targeting it must ask (medium), same as
+// the other credential paths above.
+func TestMCPReadShadowIsMedium(t *testing.T) {
+	if got := Classify(mcp("mcp__fs__read_file", `{"path":"/etc/shadow"}`), policy.Default()).Severity; got != "medium" {
+		t.Fatalf("/etc/shadow read over MCP must be medium, got %s", got)
+	}
+}
+
+// TestMCPReadPasswdNotFlagged locks in the deliberate scope exclusion: /etc/
+// passwd holds only username/uid mappings, not secrets, and reading it is a
+// common benign operation, so it must NOT match mcp-read-sensitive-path — this
+// guards against it being "fixed" back in by accident later.
+func TestMCPReadPasswdNotFlagged(t *testing.T) {
+	if got := Classify(mcp("mcp__fs__read_file", `{"path":"/etc/passwd"}`), policy.Default()).Severity; got == "medium" {
+		t.Fatalf("/etc/passwd must NOT match mcp-read-sensitive-path (deliberate exclusion), got %s", got)
 	}
 }
 

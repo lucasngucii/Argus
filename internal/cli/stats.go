@@ -78,7 +78,7 @@ func Stats(s *store.Store, w io.Writer, jsonl bool) int {
 // (disk-full when redirected to a file, a broken pipe from `| head`) is
 // logged to stderr and stops the export rather than silently truncating it
 // with no signal at all — consistent with Gate's error-visibility
-// discipline (gate.go's emitOrBlock).
+// discipline (adapter.Emit's fail-closed exit code).
 func writeJSONL(rows []store.Row, w io.Writer) {
 	enc := json.NewEncoder(w)
 	for i := len(rows) - 1; i >= 0; i-- {
