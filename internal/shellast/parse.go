@@ -126,15 +126,30 @@ func processStmt(stmt *syntax.Stmt, vars map[string]string, f *Facts) {
 			processStmt(s, vars, f)
 		}
 	case *syntax.ForClause:
-		// Loop-header words are handled in a later step; the body's commands
-		// run and must be seen. The loop variable is deliberately left unbound
-		// (see spec: an unresolved `$f` asks, consistent with any unknown var).
+		// A command substitution in the loop list (`for f in $(cmd)`) executes;
+		// resolve each list word so an unresolved expansion flags obfuscation.
+		if wi, ok := c.Loop.(*syntax.WordIter); ok {
+			for _, w := range wi.Items {
+				if _, ok := resolveWord(w, vars); !ok {
+					f.Obfuscated = true
+				}
+			}
+		}
 		for _, s := range c.Do {
 			processStmt(s, vars, f)
 		}
 	case *syntax.CaseClause:
-		// We can't know which arm matches at classify time, so surface all.
+		// The subject word and every pattern undergo expansion (including a
+		// command substitution that executes) before matching; resolve them.
+		if _, ok := resolveWord(c.Word, vars); !ok {
+			f.Obfuscated = true
+		}
 		for _, item := range c.Items {
+			for _, pat := range item.Patterns {
+				if _, ok := resolveWord(pat, vars); !ok {
+					f.Obfuscated = true
+				}
+			}
 			for _, s := range item.Stmts {
 				processStmt(s, vars, f)
 			}

