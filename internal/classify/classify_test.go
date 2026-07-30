@@ -313,6 +313,26 @@ func TestMCPReadBenignPathIsSafe(t *testing.T) {
 	}
 }
 
+// TestMCPReadShadowIsMedium locks in the /etc/shadow addition to
+// mcp-read-sensitive-path: shadow holds password hashes (real credential
+// material), so a read-verb MCP tool targeting it must ask (medium), same as
+// the other credential paths above.
+func TestMCPReadShadowIsMedium(t *testing.T) {
+	if got := Classify(mcp("mcp__fs__read_file", `{"path":"/etc/shadow"}`), policy.Default()).Severity; got != "medium" {
+		t.Fatalf("/etc/shadow read over MCP must be medium, got %s", got)
+	}
+}
+
+// TestMCPReadPasswdNotFlagged locks in the deliberate scope exclusion: /etc/
+// passwd holds only username/uid mappings, not secrets, and reading it is a
+// common benign operation, so it must NOT match mcp-read-sensitive-path — this
+// guards against it being "fixed" back in by accident later.
+func TestMCPReadPasswdNotFlagged(t *testing.T) {
+	if got := Classify(mcp("mcp__fs__read_file", `{"path":"/etc/passwd"}`), policy.Default()).Severity; got == "medium" {
+		t.Fatalf("/etc/passwd must NOT match mcp-read-sensitive-path (deliberate exclusion), got %s", got)
+	}
+}
+
 // TestMCPMutatingSensitivePathStaysHighFloor pins that adding the read rule did
 // not weaken the floor: a mutating verb over a sensitive path is still high, not
 // downgraded to the new medium.

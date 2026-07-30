@@ -107,7 +107,7 @@ func Baseline() []Rule {
 					`|` + leadBoundary + `\.argus` + trailBoundary +
 					`|` + leadBoundary + `\.claude/settings(\.local)?\.json\b` +
 					`|` + leadBoundary + `\.claude` + trailBoundary +
-					`|/etc/sudoers\b`},
+					`|/etc/sudoers\b|/etc/shadow\b`},
 			Reason: "MCP read-op targeting a credential/system/self-protect path"},
 	}
 }
