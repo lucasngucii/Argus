@@ -81,7 +81,7 @@ func Baseline() []Rule {
 			// A shell redirect into ~/.bashrc/~/.zshrc is a documented persistence
 			// technique (arXiv:2509.22040). Matches the redirect shape only, so reading a
 			// dotfile does not fire. medium/ask — editing dotfiles can be legitimate.
-			Match:  Match{Raw: `>>?\s*\S*\.(bash|zsh)rc\b`},
+			Match:  Match{Raw: `(?i)>>?\s*\S*\.(bash|zsh)rc\b`},
 			Reason: "shell redirect into a shell rc file (persistence)"},
 		{ID: "mcp-mutating-tool", Enabled: true, Severity: "medium", Tool: []string{"mcp"},
 			// No shell AST for MCP — the tool name is the only intent signal. Snake_case

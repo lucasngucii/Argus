@@ -212,6 +212,22 @@ func TestRcFileInjectIsMedium(t *testing.T) {
 		t.Fatal("overwrite .zshrc must be medium")
 	}
 }
+
+// TestRcFileInjectCaseInsensitive closes the same case-insensitive-filesystem
+// bypass fixed on the self-protect/credential rules (spec:
+// 2026-07-30-selfprotect-case-insensitivity-fix.md, round-4 amendment):
+// ~/.bashrc and ~/.BASHRC name the same file on a case-insensitive filesystem
+// (macOS/Windows), so an uppercase rc filename must not evade the redirect
+// check either.
+func TestRcFileInjectCaseInsensitive(t *testing.T) {
+	if sev("echo 'evil' >> ~/.BASHRC", "/tmp") != "medium" {
+		t.Fatalf("append to .BASHRC must be medium, got %s", sev("echo 'evil' >> ~/.BASHRC", "/tmp"))
+	}
+	if sev("printf 'x' > /home/dev/.Zshrc", "/tmp") != "medium" {
+		t.Fatal("overwrite .Zshrc must be medium")
+	}
+}
+
 func TestRcFileReadNotFlagged(t *testing.T) {
 	for _, c := range []string{"cat ~/.bashrc", "source ~/.bashrc"} {
 		if sev(c, "/tmp") != "safe" {

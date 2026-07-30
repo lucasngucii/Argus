@@ -66,6 +66,14 @@ MCP-read rule) as appropriate — mirroring the existing golden case for the can
 Plus a regression check that the existing canonical-case golden tests for all 5 rules still
 pass unchanged, and that the full suite has no new failures.
 
+## Amendment — `rc-file-inject` (found during round-4 adversarial re-verification)
+
+Same bug class, different rule: `rc-file-inject`'s `Raw: ">>?\s*\S*\.(bash|zsh)rc\b"` doesn't use
+`leadBoundary`/`trailBoundary` (so it was outside the original 5-rule scope) but has the
+identical case-sensitivity gap — `>> ~/.bashrc` is caught, `>> ~/.BASHRC` / `>> ~/.Zshrc` are not.
+Lower severity than the other 5 (medium/ask persistence heuristic, not a floor), but the same
+one-line fix applies: prepend `(?i)`.
+
 ## Out of scope
 
 The `../claude/settings.json` sibling-fabrication path-traversal residual (documented in the
