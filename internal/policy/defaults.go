@@ -212,9 +212,9 @@ func SelfProtectRules() []Rule {
 		// one project's own subfolder is left to the general rm-recursive/
 		// rm-catastrophic scoring, not self-protection.
 		{ID: "self-protect-claude-settings", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash", "Write", "Edit"},
-			Match: Match{Raw: leadBoundary + `\.claude/(\./)*settings(\.local)?\.json\b` +
+			Match: Match{Raw: leadBoundary + `\.claude/[./]*settings(\.local)?\.json\b` +
 				`|` + leadBoundary + `\.claude` + bareDirBoundary +
-				`|` + leadBoundary + `\.claude/projects` + bareDirBoundary},
+				`|` + leadBoundary + `\.claude/[./]*projects` + bareDirBoundary},
 			Reason: "self-protection: Claude Code hook wiring"},
 		// Both the .argus dir (bare-directory delete included, same reasoning
 		// as above) AND the binary — see leadBoundary/trailBoundary for why a

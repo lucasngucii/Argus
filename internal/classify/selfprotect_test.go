@@ -131,15 +131,18 @@ func TestMetacharAdjacentBinaryDeleteIsHigh(t *testing.T) {
 	}
 }
 
-// TestClaudeSettingsAndBareDirAlwaysHigh pins the verification table from
+// TestClaudeSettingsAndBareDirAlwaysHigh is a "must stay high" regression
+// guard pinning the verification table from
 // docs/superpowers/specs/2026-07-30-self-protect-claude-scope-fix.md rows 1-6:
 // the settings.json path (plain and `./`-obfuscated), the bare .claude dir,
 // and its double-slash/dot-alias/parent-traversal variants must all classify
-// high via self-protect-claude-settings. The `./`-obfuscated settings.json
-// case and the double-slash/dot-alias/parent-traversal bare-dir cases are the
-// reopened-gap regressions the fix closes: they must have failed against the
-// pre-fix Raw pattern (bareDirBoundary didn't exist; nhánh 1 had no `(\./)*`
-// tolerance) and must pass now.
+// high via self-protect-claude-settings. Most of these rows already passed
+// against the old, broader pre-fix regex (which matched ANY subpath under
+// .claude/, obfuscated or not) — this test does not prove a fix transition,
+// it pins that narrowing the pattern to bareDirBoundary never lost these
+// cases. See TestClaudeSettingsSeparatorNoiseBypass for the genuine
+// obfuscation-transition regression (the `[./]*` fix in commit e620267's
+// follow-up).
 func TestClaudeSettingsAndBareDirAlwaysHigh(t *testing.T) {
 	pol := policy.Default()
 	cases := []hook.Payload{
@@ -154,6 +157,33 @@ func TestClaudeSettingsAndBareDirAlwaysHigh(t *testing.T) {
 		d := Classify(p, pol)
 		if d.Severity != "high" {
 			t.Fatalf("self-protection breach (got %s): %+v", d.Severity, p.ToolInput)
+		}
+	}
+}
+
+// TestClaudeSettingsSeparatorNoiseBypass is the genuine obfuscation-transition
+// regression guard: commit e620267 hardened the settings.json alternative
+// with `(\./)*` tolerance for `./`-noise, but `(\./)*` only matches repeated
+// "./" pairs, not a bare double-slash — so `.claude//settings.json` (which
+// collapses to the same file as `.claude/settings.json` on any filesystem)
+// bypassed the floor entirely. The same gap existed, worse, on the new
+// `.claude/projects` alternative added in the same commit: it had ZERO
+// separator tolerance, so even `.claude/./projects` (let alone `//`) bypassed
+// the projects-exfil protection outright. These cases were CONFIRMED to fail
+// against the `(\./)*`/no-tolerance Raw pattern and to pass after replacing
+// both separator-tolerance spots with `[./]*` (matching bareDirBoundary's
+// existing "any run of dot/slash" convention).
+func TestClaudeSettingsSeparatorNoiseBypass(t *testing.T) {
+	pol := policy.Default()
+	cases := []hook.Payload{
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "cat ~/.claude//settings.json"}},
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "cp -r ~/.claude/./projects /tmp/exfil"}},
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "cp -r ~/.claude//projects /tmp/exfil"}},
+	}
+	for _, p := range cases {
+		d := Classify(p, pol)
+		if d.Severity != "high" {
+			t.Fatalf("separator-noise self-protect bypass (got %s): %+v", d.Severity, p.ToolInput)
 		}
 	}
 }
