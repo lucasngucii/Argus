@@ -48,7 +48,14 @@ func Baseline() []Rule {
 			// Both the `docker` subcommand form and the legacy hyphenated
 			// `docker-compose` binary — the latter is its own command name, so it
 			// must be listed explicitly (matchedCommands' family-prefix is "." only).
-			Match: Match{Cmd: []string{"docker", "docker-compose"}, ArgsContain: []string{"service", "stack", "swarm", "prune", "down"}}},
+			// Narrowed from noun-only (ArgsContain on service/stack/swarm/prune/down)
+			// to noun+mutating-verb: listing subcommands like `service ls/ps/inspect`
+			// are read-only and must not ask, so the match now requires a mutating
+			// verb after the noun (create/rm/remove/scale/update/deploy/leave/init/
+			// rollback), plus the bare `system prune`/`compose down` cases and the
+			// hyphenated `docker-compose down` (whose args are just `down`).
+			Match: Match{Cmd: []string{"docker", "docker-compose"},
+				ArgMatches: `(?i)\b(service|stack|swarm)\s+(create|rm|remove|scale|update|deploy|leave|init|rollback)\b|\bsystem\s+prune\b|\bcompose\s+down\b|\bprune\b|\bdown\b`}},
 		{ID: "db-write", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "DB client write",
 			Match: Match{Cmd: []string{"psql", "mongosh", "mongo", "clickhouse-client"},
 				ArgMatches: `(?i)\b(insert\s+into|update\s|create\s+(table|database)|alter\s|grant\s)\b`}},

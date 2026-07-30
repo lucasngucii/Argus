@@ -581,6 +581,25 @@ func TestDockerBenignStaysSafe(t *testing.T) {
 	}
 }
 
+// TestDockerServiceNarrowedToMutations pins the noun→verb narrowing: listing
+// subcommands (ls/ps/inspect) on service/stack/swarm are read-only and must
+// stay safe, while mutating verbs (create/rm/prune/down/...) still ask.
+func TestDockerServiceNarrowedToMutations(t *testing.T) {
+	for _, cmd := range []string{"docker service ls", "docker stack ps s", "docker service inspect w"} {
+		if got := sev(cmd, "/tmp"); got != "safe" {
+			t.Fatalf("%q (a view) must be safe, got %s", cmd, got)
+		}
+	}
+	for _, cmd := range []string{
+		"docker service create --name x img", "docker service rm w",
+		"docker system prune -f", "docker compose down", "docker-compose down",
+	} {
+		if got := sev(cmd, "/tmp"); got != "medium" {
+			t.Fatalf("%q (a mutation) must be medium, got %s", cmd, got)
+		}
+	}
+}
+
 // TestCompoundStatementsEscalate pins that a dangerous command wrapped in any
 // control construct now reaches the classifier (was safe before the shellast
 // flatten fix) — the §2 fail-open corpus.
