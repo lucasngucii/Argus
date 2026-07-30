@@ -130,3 +130,87 @@ func TestMetacharAdjacentBinaryDeleteIsHigh(t *testing.T) {
 		}
 	}
 }
+
+// TestClaudeSettingsAndBareDirAlwaysHigh pins the verification table from
+// docs/superpowers/specs/2026-07-30-self-protect-claude-scope-fix.md rows 1-6:
+// the settings.json path (plain and `./`-obfuscated), the bare .claude dir,
+// and its double-slash/dot-alias/parent-traversal variants must all classify
+// high via self-protect-claude-settings. The `./`-obfuscated settings.json
+// case and the double-slash/dot-alias/parent-traversal bare-dir cases are the
+// reopened-gap regressions the fix closes: they must have failed against the
+// pre-fix Raw pattern (bareDirBoundary didn't exist; nhánh 1 had no `(\./)*`
+// tolerance) and must pass now.
+func TestClaudeSettingsAndBareDirAlwaysHigh(t *testing.T) {
+	pol := policy.Default()
+	cases := []hook.Payload{
+		{ToolName: "Write", ToolInput: hook.ToolInput{FilePath: "/Users/x/.claude/settings.json"}},
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "cat ~/.claude/./././settings.json"}},
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm -rf ~/.claude"}},
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm -rf ~/.claude//"}},
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm -rf ~/.claude/."}},
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "cp -r ~/.claude/.. /tmp/x"}},
+	}
+	for _, p := range cases {
+		d := Classify(p, pol)
+		if d.Severity != "high" {
+			t.Fatalf("self-protection breach (got %s): %+v", d.Severity, p.ToolInput)
+		}
+	}
+}
+
+// TestClaudeProjectsWholeDirAlwaysHigh pins verification table rows 7-8: the
+// new nhánh 3. `.claude/projects` is now protected as its own whole-directory
+// reference (spec design decision 4), same reasoning as bare `.claude`.
+func TestClaudeProjectsWholeDirAlwaysHigh(t *testing.T) {
+	pol := policy.Default()
+	cases := []hook.Payload{
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm -rf ~/.claude/projects"}},
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "cp -r ~/.claude/projects /tmp/exfil"}},
+	}
+	for _, p := range cases {
+		d := Classify(p, pol)
+		if d.Severity != "high" {
+			t.Fatalf("self-protection breach (got %s): %+v", d.Severity, p.ToolInput)
+		}
+	}
+}
+
+// TestClaudeProjectsSubpathNotSelfProtected pins verification table rows 9-10
+// — the reported bug and its fix. Narrowing the bare-dir alternative to a
+// real whole-directory boundary (bareDirBoundary) means a genuinely distinct
+// subpath under .claude/projects (an individual project's memory file, or one
+// specific project's directory) is no longer floored by self-protect. This is
+// the false positive the spec exists to close: before the fix, the old
+// trailBoundary matched `.claude` followed directly by "/", with no further
+// look-ahead, so ANY subpath — including these two — was caught and floored
+// to high via self-protect-claude-settings.
+func TestClaudeProjectsSubpathNotSelfProtected(t *testing.T) {
+	pol := policy.Default()
+
+	// A read of an individual project's own memory file must not be floored
+	// by self-protect at all — it's an everyday, legitimate operation.
+	readCases := []hook.Payload{
+		{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "cat ~/.claude/projects/x/memory/foo.md"}},
+		{ToolName: "Write", ToolInput: hook.ToolInput{FilePath: "/Users/x/.claude/projects/x/memory/foo.md"}},
+	}
+	for _, p := range readCases {
+		d := Classify(p, pol)
+		if d.RuleID == "self-protect-claude-settings" {
+			t.Fatalf("false positive: self-protect-claude-settings fired on a legitimate project-memory path: %+v (severity %s)", p.ToolInput, d.Severity)
+		}
+	}
+
+	// Deleting ONE specific project's directory is a genuinely distinct
+	// subpath, not a dot-alias of .claude/projects itself — self-protect must
+	// not floor it. It may still be scored (medium) by the general
+	// rm-recursive rule independently; assert what it actually scores rather
+	// than assuming.
+	rmCase := hook.Payload{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm -rf ~/.claude/projects/x"}}
+	d := Classify(rmCase, pol)
+	if d.RuleID == "self-protect-claude-settings" {
+		t.Fatalf("false positive: self-protect-claude-settings fired on a single project's subdirectory: %+v (severity %s)", rmCase.ToolInput, d.Severity)
+	}
+	if d.Severity != "medium" {
+		t.Fatalf("rm -rf of a single project subdir: got severity %q, want %q (via rm-recursive)", d.Severity, "medium")
+	}
+}

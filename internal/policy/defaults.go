@@ -15,6 +15,14 @@ const leadBoundary = `(^|[\s;&|("'/])`
 // doesn't cover the metacharacter sitting directly against the path.
 const trailBoundary = `(/|[\s;&|)"']|$)`
 
+// bareDirBoundary closes a whole-directory-or-alias-of-itself reference: any
+// run of only "." and "/" characters (a trailing slash, "/." or "/.." self/
+// parent aliases, or repeated slashes) still refers to the SAME entity, not a
+// genuinely distinct file/dir inside it — so it must still be caught. A named
+// segment after the slash (an actual deeper path) is a distinct target and is
+// NOT covered by this boundary; unlike trailBoundary, "/" alone is not enough.
+const bareDirBoundary = `[./]*([\s;&|)"']|$)`
+
 // Default returns the effective policy with no overrides (baseline only) —
 // the fail-closed fallback for a missing/unreadable policy.json (gate, web
 // explain).
@@ -192,9 +200,21 @@ func SelfProtectRules() []Rule {
 		// Both the settings file itself AND the bare .claude dir as a delete
 		// target (`rm -rf ~/.claude` has no trailing "/" to anchor the first
 		// alternative on).
+		// Three alternatives (spec: 2026-07-30-self-protect-claude-scope-fix):
+		// (1) settings.json, tolerating "./"-noise between .claude/ and
+		// settings (closes an obfuscation bypass reopened by narrowing (2));
+		// (2) the bare .claude dir itself or a dot-alias of it (bareDirBoundary,
+		// not trailBoundary — trailBoundary's lone "/" branch matched ANY
+		// subpath, floor-ing legitimate reads/writes under .claude/, e.g. the
+		// auto-memory system's own project files); (3) .claude/projects as its
+		// own whole-directory reference (same reasoning as (2)) — bulk-copying
+		// or deleting every project's transcripts/memory is still floored, but
+		// one project's own subfolder is left to the general rm-recursive/
+		// rm-catastrophic scoring, not self-protection.
 		{ID: "self-protect-claude-settings", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash", "Write", "Edit"},
-			Match: Match{Raw: leadBoundary + `\.claude/settings(\.local)?\.json\b` +
-				`|` + leadBoundary + `\.claude` + trailBoundary},
+			Match: Match{Raw: leadBoundary + `\.claude/(\./)*settings(\.local)?\.json\b` +
+				`|` + leadBoundary + `\.claude` + bareDirBoundary +
+				`|` + leadBoundary + `\.claude/projects` + bareDirBoundary},
 			Reason: "self-protection: Claude Code hook wiring"},
 		// Both the .argus dir (bare-directory delete included, same reasoning
 		// as above) AND the binary — see leadBoundary/trailBoundary for why a
