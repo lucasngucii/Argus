@@ -248,6 +248,67 @@ func TestSelfProtectCaseInsensitiveArgus(t *testing.T) {
 	}
 }
 
+func TestListingExemptionAllowsMetadataReads(t *testing.T) {
+	for _, cmd := range []string{
+		"ls ~/.argus", "ls ~/.claude", "ls ~/.ssh", "stat ~/.aws",
+		"stat ~/.claude/settings.json", "du ~/.claude/projects",
+		"ls ~/.argus && stat ~/.claude",
+	} {
+		if got := sev(cmd, "/tmp"); got != "safe" {
+			t.Fatalf("%q: metadata listing must be safe, got %s", cmd, got)
+		}
+	}
+}
+
+func TestListingExemptionStillFloorsEverythingElse(t *testing.T) {
+	for _, cmd := range []string{
+		// writes/deletes
+		"rm -rf ~/.claude", "rm -rf ~/.argus",
+		"echo x > ~/.claude/settings.json", "cat a > ~/.argus/db",
+		// content reads (the main line held)
+		"cat ~/.claude/settings.json", "cat ~/.claude/settings.local.json",
+		"grep token ~/.claude/settings.local.json",
+		"cat ~/.ssh/id_rsa", "grep key ~/.aws/credentials",
+		"cat ~/.argus/policy.json",
+		// disguised writes/exec via non-listing verbs
+		"find ~/.claude -delete", "sort -o ~/.claude/settings.json in",
+		"uniq in ~/.argus/db",
+		// git (all forms floored)
+		"git -C ~/.claude show HEAD:settings.local.json",
+		// structural
+		"cat ~/.claude/x && rm -rf ~/.argus", "X=$(rm -rf ~/.claude)",
+		"ls $(evil) ~/.claude", "ls ~/.claude | tee /other",
+		`bash -c "ls ~/.claude"`,
+	} {
+		if got := sev(cmd, "/tmp"); rank(got) < rank("high") {
+			t.Fatalf("%q must stay high, got %s", cmd, got)
+		}
+	}
+}
+
+func TestListingExemptionIsBashOnly(t *testing.T) {
+	// A Write-tool payload to a protected path must stay floored (tool != Bash).
+	for _, fp := range []string{"~/.claude/settings.json", "~/.ssh/id_rsa"} {
+		p := hook.Payload{ToolName: "Write", PermissionMode: "default",
+			ToolInput: hook.ToolInput{FilePath: fp}}
+		if got := Classify(p, policy.Default()).Severity; rank(got) < rank("high") {
+			t.Fatalf("Write to %q must stay high, got %s", fp, got)
+		}
+	}
+}
+
+func TestListingExemptionIsBuiltinFloorOnly(t *testing.T) {
+	// A USER policy rule reusing a built-in floor ID must NOT get the exemption.
+	pol := policy.File{Version: 1, Rules: []policy.Rule{{
+		ID: "self-protect-argus", Enabled: true, AlwaysHigh: true, Severity: "high",
+		Tool: []string{"Bash"}, Reason: "user rule", Match: policy.Match{Raw: `secretfile`},
+	}}}.Effective()
+	got := Classify(bash("ls secretfile", "default", "/tmp"), pol).Severity
+	if rank(got) < rank("high") {
+		t.Fatalf("user rule with built-in ID must still floor, got %s", got)
+	}
+}
+
 func TestClaudeProjectsSubpathNotSelfProtected(t *testing.T) {
 	pol := policy.Default()
 

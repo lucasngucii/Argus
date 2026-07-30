@@ -92,7 +92,7 @@ func Classify(p hook.Payload, pol policy.Policy) Decision {
 	floorHit := false
 	regexBroke := false
 
-	consider := func(rules []policy.Rule) {
+	consider := func(rules []policy.Rule, isBuiltinFloor bool) {
 		for _, r := range rules {
 			if !r.Enabled || r.Allow {
 				continue
@@ -102,6 +102,15 @@ func Classify(p hook.Payload, pol policy.Policy) Decision {
 				regexBroke = true
 			}
 			if !ok {
+				continue
+			}
+			// Read-only view exemption (CLAUDE.md §4/§5, narrowed): a pure
+			// metadata listing (ls/stat/du) of a protected path is not a
+			// self-protect/credential violation. Bash-only and built-in-floor
+			// only. Runs BEFORE severity/floorHit is set, so this is a narrowed
+			// match, never a downgrade of an already-matched floor.
+			if isBuiltinFloor && tool == "Bash" &&
+				isSelfProtectOrCredential(r.ID) && isReadOnlyChain(f) {
 				continue
 			}
 			s := r.Severity
@@ -132,8 +141,8 @@ func Classify(p hook.Payload, pol policy.Policy) Decision {
 			}
 		}
 	}
-	consider(policy.Floor()) // built-in floor (owns its pass; Default() does not embed it)
-	consider(pol.Rules)      // user/default rules (may carry AlwaysHigh too)
+	consider(policy.Floor(), true) // built-in floor (owns its pass; Default() does not embed it)
+	consider(pol.Rules, false)     // user/default rules (may carry AlwaysHigh too)
 
 	// Obfuscation / parse-failure escalation, scoped to visible danger.
 	if f.Obfuscated || !f.ParseOK {

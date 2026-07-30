@@ -162,6 +162,12 @@ func Floor() []Rule {
 			Match: Match{PipesInto: []string{"sh", "bash", "zsh"}}, Reason: "pipe-to-shell"},
 		{ID: "db-destructive", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
 			Match: Match{ArgMatches: `(?i)\b(drop|truncate)\s+(table|database)\b|\bdelete\s+from\b|\.drop\(\)|deletemany`}, Reason: "DB destructive"},
+		// LISTING-EXEMPT (classify.isSelfProtectOrCredential): a pure ls/stat
+		// of these paths is `safe`. Content reads (cat/grep/…) of a credential
+		// file stay floored — only the metadata (names, sizes, timestamps) of
+		// the directory/file is exempt. Never broaden this regex to match on
+		// file contents; the exemption's safety depends on listingVerbs
+		// (readonly.go) staying metadata-only.
 		{ID: "credential-system-write", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash", "Write", "Edit"},
 			// Two forms per credential dir: a file inside it (…/id_rsa,
 			// …/id_rsa.pub — the .pub case is over-inclusive but fail-safe, so
@@ -216,6 +222,10 @@ func SelfProtectRules() []Rule {
 		// or deleting every project's transcripts/memory is still floored, but
 		// one project's own subfolder is left to the general rm-recursive/
 		// rm-catastrophic scoring, not self-protection.
+		// LISTING-EXEMPT (classify.isSelfProtectOrCredential): a pure ls/stat
+		// of these paths is `safe`. These paths must stay non-secret-CONTENT
+		// (a listing reveals only names) — never broaden this regex to a file
+		// whose contents are a secret without revisiting readonly.go.
 		{ID: "self-protect-claude-settings", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash", "Write", "Edit"},
 			Match: Match{Raw: `(?i)` + leadBoundary + `\.claude/[./]*settings(\.local)?\.json\b` +
 				`|` + leadBoundary + `\.claude` + bareDirBoundary +
@@ -225,6 +235,10 @@ func SelfProtectRules() []Rule {
 		// as above) AND the binary — see leadBoundary/trailBoundary for why a
 		// plain (^|/)…(\s|$) anchor missed both a relative `bin/argus` (no
 		// leading "/") and a metachar-adjacent one (`rm bin/argus&&echo`).
+		// LISTING-EXEMPT (classify.isSelfProtectOrCredential): a pure ls/stat
+		// of these paths is `safe`. These paths must stay non-secret-CONTENT
+		// (a listing reveals only names) — never broaden this regex to a file
+		// whose contents are a secret without revisiting readonly.go.
 		{ID: "self-protect-argus", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash", "Write", "Edit"},
 			Match: Match{Raw: `(?i)` + leadBoundary + `\.argus` + trailBoundary +
 				`|` + leadBoundary + `bin/argus` + trailBoundary},

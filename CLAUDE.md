@@ -11,8 +11,8 @@ Binding rules for this codebase. **Violating the letter violates the spirit.** W
 1. **Pure core, dirty shell.** `classify(payload, policy) → Decision` is pure: no I/O, no clock, no globals, no randomness. Parsing, DB, and hook emission wrap it. This is what makes the engine testable and replayable.
 2. **The hot path never fails open.** On any error touching a command with a dangerous verb → escalate (`ask`/`deny`). Never silent-allow.
 3. **Logging/DB failures never change the verdict.** The verdict is computed before, and independently of, any write.
-4. **`high` is a floor.** An `alwaysHigh` match cannot be downgraded by policy or allowlist. Never add a code path that can.
-5. **Self-protection stays high.** Never exempt Argus's own config / binary / hook / db paths.
+4. **`high` is a floor.** An `alwaysHigh` match that *fires* cannot be downgraded by policy or allowlist — never add a code path that can. A rule may only *decline to match* (a narrowed match condition) when the narrowing is fail-closed: any parse failure, obfuscation, redirect, pipe, mixed chain, empty command list, or non-listing/write/exec command yields no exemption. Only a pure metadata-listing chain (`ls`/`stat`/`du`, Bash-only) is ever exempt.
+5. **Self-protection stays high.** Self-protection floors writes, deletes, and all content reads of Argus's own config / binary / hook / db paths and credential paths. Only a pure metadata listing (`ls`/`stat`/`du` — names and metadata, never content) is exempt, Bash-only, via `internal/classify/readonly.go`; MCP and content reads are never exempt.
 
 ## Code style
 - **One file, one responsibility.** If a file passes ~200 lines or you can't name its single job, split it.
