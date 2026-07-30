@@ -52,10 +52,13 @@ func Baseline() []Rule {
 			// to noun+mutating-verb: listing subcommands like `service ls/ps/inspect`
 			// are read-only and must not ask, so the match now requires a mutating
 			// verb after the noun (create/rm/remove/scale/update/deploy/leave/init/
-			// rollback), plus the bare `system prune`/`compose down` cases and the
-			// hyphenated `docker-compose down` (whose args are just `down`).
+			// rollback). A bare `prune` or `down` token anywhere in the docker args
+			// also triggers the ask -- that single catch-all is why `docker system
+			// prune`, `docker compose down`, and the hyphenated `docker-compose down`
+			// (whose args are just `down`) are all caught without needing their own
+			// specific alternatives.
 			Match: Match{Cmd: []string{"docker", "docker-compose"},
-				ArgMatches: `(?i)\b(service|stack|swarm)\s+(create|rm|remove|scale|update|deploy|leave|init|rollback)\b|\bsystem\s+prune\b|\bcompose\s+down\b|\bprune\b|\bdown\b`}},
+				ArgMatches: `(?i)\b(service|stack|swarm)\s+(create|rm|remove|scale|update|deploy|leave|init|rollback)\b|\bprune\b|\bdown\b`}},
 		{ID: "db-write", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "DB client write",
 			Match: Match{Cmd: []string{"psql", "mongosh", "mongo", "clickhouse-client"},
 				ArgMatches: `(?i)\b(insert\s+into|update\s|create\s+(table|database)|alter\s|grant\s)\b`}},

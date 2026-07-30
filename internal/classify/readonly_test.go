@@ -15,7 +15,7 @@ func TestIsReadOnlyChain(t *testing.T) {
 		{"single listing", "ls /x", true},
 		{"stat", "stat /x", true},
 		{"multi listing", "ls /x && stat /y", true},
-		{"listing pipe listing", "ls /x", true},
+		{"listing piped to non-listing sink", "ls /x | grep y", false},
 		{"content read", "cat /x", false},
 		{"grep", "grep foo /x", false},
 		{"write verb", "rm -rf /x", false},
@@ -74,6 +74,10 @@ func TestIsReadOnlyChainConditionNegatives(t *testing.T) {
 	sink := shellast.Facts{ParseOK: true, Commands: []shellast.Cmd{ls}, PipeSinks: []string{"tee"}}
 	if isReadOnlyChain(sink) {
 		t.Fatal("a non-listing pipe sink must not be read-only")
+	}
+	listingSink := shellast.Facts{ParseOK: true, Commands: []shellast.Cmd{ls}, PipeSinks: []string{"stat"}}
+	if !isReadOnlyChain(listingSink) {
+		t.Fatal("a listing pipe sink must be read-only (exercises the PipeSinks accept path)")
 	}
 }
 
