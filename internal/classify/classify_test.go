@@ -18,6 +18,21 @@ func mcp(name, argsJSON string) hook.Payload {
 	return hook.Payload{ToolName: name, PermissionMode: "default", ToolInput: hook.ToolInput{Raw: json.RawMessage(argsJSON)}}
 }
 
+// TestMissingToolNameCommandStillDenied is the classify-level pin for the
+// Payload.Subject() fail-open fix: a missing or mis-cased tool_name must not
+// make a dangerous command's subject resolve to empty and classify safe.
+func TestMissingToolNameCommandStillDenied(t *testing.T) {
+	cases := []hook.Payload{
+		{ToolInput: hook.ToolInput{Command: "rm -rf /"}},                   // tool_name absent
+		{ToolName: "bash", ToolInput: hook.ToolInput{Command: "rm -rf /"}}, // mis-cased
+	}
+	for _, p := range cases {
+		if got := Classify(p, policy.Default()).Severity; got != "high" {
+			t.Fatalf("tool_name=%q: rm -rf / must be high, got %s", p.ToolName, got)
+		}
+	}
+}
+
 func TestSudoRmIsHigh(t *testing.T) {
 	if sev("sudo rm -rf /", "/tmp") != "high" {
 		t.Fatal(sev("sudo rm -rf /", "/tmp"))

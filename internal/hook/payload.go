@@ -85,14 +85,17 @@ func (p *Payload) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// Subject returns the value the classifier judges: the shell command for
-// Bash, otherwise the file path.
+// Subject returns the value the classifier judges: the shell command when
+// one is present, otherwise the file path. Judging on Command's presence
+// (rather than an exact "Bash" tool_name match) keeps this fail-closed: a
+// missing or mis-cased tool_name must not hide a real command behind an
+// empty subject.
 func (p Payload) Subject() string {
 	switch {
-	case p.ToolName == "Bash":
-		return p.ToolInput.Command
 	case p.IsMCP():
 		return string(p.ToolInput.Raw)
+	case p.ToolInput.Command != "":
+		return p.ToolInput.Command
 	default:
 		return p.ToolInput.FilePath
 	}
