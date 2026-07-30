@@ -57,7 +57,12 @@ func Baseline() []Rule {
 			// name (`bash`, `sh`) is the command word, never an arg, so the
 			// `(bash|sh|zsh)\s+…\.sh` alternative could never fire against args
 			// alone. The lead `[^-|;&]` guard keeps `bash --version` benign.
-			Match: Match{Raw: `(?i)\b(bash|sh|zsh)\s+[^-|;&]+\.sh\b|-c\s`}},
+			// The `-c` branch is anchored behind a real shell interpreter word
+			// and stays case-sensitive (unlike the `.sh` branch): a bare `-c\s`
+			// alone matched any command whose flags happened to contain "-c "
+			// or, case-insensitively, "-C " -- e.g. `git -C /repo show HEAD:file`
+			// (git's repo-dir flag), a false positive with no opaque exec at all.
+			Match: Match{Raw: `(?i:\b(bash|sh|zsh)\s+[^-|;&]+\.sh\b)|\b(bash|sh|zsh)\b(\s+-\S+)*\s+-c\s`}},
 		{ID: "grep-exfil", Enabled: true, Severity: "medium", Tool: []string{"Bash"},
 			// Credential search piped to a network sink — the documented grep→curl
 			// exfiltration shape (arXiv:2509.22040). medium (ask): a keyword heuristic,
