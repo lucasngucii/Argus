@@ -247,6 +247,23 @@ func TestMCPFileopSensitivePathIsHighFloor(t *testing.T) {
 		}
 	}
 }
+
+// TestMCPFileopSensitivePathCaseInsensitive pins the case-insensitivity fix
+// (docs/superpowers/specs/2026-07-30-selfprotect-case-insensitivity-fix.md):
+// ~/.claude/settings.json and ~/.CLAUDE/Settings.json name the same file on a
+// case-insensitive filesystem, so an alternate-case path must still hit the
+// mcp-fileop-sensitive-path floor. Both the directory AND the file segment
+// are cased differently here: varying only the filename (as in the spec's
+// literal example) is NOT diagnostic for this rule, because its `.claude`
+// alternative uses trailBoundary (any subpath), so a lowercase ".claude"
+// segment alone already floors regardless of what follows — the directory
+// casing must also flip to actually exercise the fix.
+func TestMCPFileopSensitivePathCaseInsensitive(t *testing.T) {
+	if got := Classify(mcp("mcp__fs__write_file", `{"path":"/home/x/.CLAUDE/Settings.json","content":"k"}`), policy.Default()).Severity; got != "high" {
+		t.Fatalf("case-insensitive mcp-fileop-sensitive-path bypass, got %s", got)
+	}
+}
+
 func TestMCPSearchMentioningPathNotFloored(t *testing.T) {
 	// the FP the AND-gate prevents: a non-file-op tool whose args merely MENTION a path.
 	if got := Classify(mcp("mcp__docs__search", `{"query":"how do I rotate /home/x/.ssh/id_rsa"}`), policy.Default()).Severity; got == "high" {
@@ -299,6 +316,17 @@ func TestMCPReadSensitivePathIsMedium(t *testing.T) {
 		if got := Classify(mcp(c.name, c.args), policy.Default()).Severity; got != "medium" {
 			t.Fatalf("%s over a sensitive path must be medium, got %s", c.name, got)
 		}
+	}
+}
+
+// TestMCPReadSensitivePathCaseInsensitive pins the case-insensitivity fix
+// (docs/superpowers/specs/2026-07-30-selfprotect-case-insensitivity-fix.md):
+// ~/.aws/credentials and ~/.AWS/credentials name the same file on a
+// case-insensitive filesystem, so a read-verb MCP tool over the alternate-case
+// path must still ask (medium).
+func TestMCPReadSensitivePathCaseInsensitive(t *testing.T) {
+	if got := Classify(mcp("mcp__fs__read_file", `{"path":"/home/x/.AWS/credentials"}`), policy.Default()).Severity; got != "medium" {
+		t.Fatalf("case-insensitive mcp-read-sensitive-path bypass, got %s", got)
 	}
 }
 

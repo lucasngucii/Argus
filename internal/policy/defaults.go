@@ -108,7 +108,7 @@ func Baseline() []Rule {
 			// extracted — the two are the mutating/read halves of one surface).
 			Match: Match{
 				McpTool: `(?i)(^|_)(read|get|fetch|load|open|download|cat|show|view|dump|export|tail|head|print)(_|$)`,
-				Raw: leadBoundary + `\.ssh/(id_[A-Za-z0-9_]+|authorized_keys)\b` +
+				Raw: `(?i)` + leadBoundary + `\.ssh/(id_[A-Za-z0-9_]+|authorized_keys)\b` +
 					`|` + leadBoundary + `\.ssh` + trailBoundary +
 					`|` + leadBoundary + `\.aws/credentials\b` +
 					`|` + leadBoundary + `\.aws` + trailBoundary +
@@ -163,7 +163,7 @@ func Floor() []Rule {
 			// left as-is; …/credentials), and the bare directory itself as the
 			// delete target (`rm -rf ~/.ssh`), which has neither a trailing
 			// "/" nor (for a relative path) a leading "/" to anchor on.
-			Match: Match{Raw: leadBoundary + `\.ssh/(id_[A-Za-z0-9_]+|authorized_keys)\b` +
+			Match: Match{Raw: `(?i)` + leadBoundary + `\.ssh/(id_[A-Za-z0-9_]+|authorized_keys)\b` +
 				`|` + leadBoundary + `\.ssh` + trailBoundary +
 				`|` + leadBoundary + `\.aws/credentials\b` +
 				`|` + leadBoundary + `\.aws` + trailBoundary +
@@ -176,7 +176,7 @@ func Floor() []Rule {
 			// floor stays reserved for a real write/delete against a sensitive target.
 			Match: Match{
 				McpTool: `(?i)(^|_)(write|delete|remove|move|copy|create|put|append|truncate|chmod|unlink)(_|$)`,
-				Raw: leadBoundary + `\.ssh/(id_[A-Za-z0-9_]+|authorized_keys)\b` +
+				Raw: `(?i)` + leadBoundary + `\.ssh/(id_[A-Za-z0-9_]+|authorized_keys)\b` +
 					`|` + leadBoundary + `\.ssh` + trailBoundary +
 					`|` + leadBoundary + `\.aws/credentials\b` +
 					`|` + leadBoundary + `\.aws` + trailBoundary +
@@ -212,7 +212,7 @@ func SelfProtectRules() []Rule {
 		// one project's own subfolder is left to the general rm-recursive/
 		// rm-catastrophic scoring, not self-protection.
 		{ID: "self-protect-claude-settings", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash", "Write", "Edit"},
-			Match: Match{Raw: leadBoundary + `\.claude/[./]*settings(\.local)?\.json\b` +
+			Match: Match{Raw: `(?i)` + leadBoundary + `\.claude/[./]*settings(\.local)?\.json\b` +
 				`|` + leadBoundary + `\.claude` + bareDirBoundary +
 				`|` + leadBoundary + `\.claude/[./]*projects` + bareDirBoundary},
 			Reason: "self-protection: Claude Code hook wiring"},
@@ -221,7 +221,7 @@ func SelfProtectRules() []Rule {
 		// plain (^|/)…(\s|$) anchor missed both a relative `bin/argus` (no
 		// leading "/") and a metachar-adjacent one (`rm bin/argus&&echo`).
 		{ID: "self-protect-argus", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash", "Write", "Edit"},
-			Match: Match{Raw: leadBoundary + `\.argus` + trailBoundary +
+			Match: Match{Raw: `(?i)` + leadBoundary + `\.argus` + trailBoundary +
 				`|` + leadBoundary + `bin/argus` + trailBoundary},
 			Reason: "self-protection: argus config/db/binary"},
 	}

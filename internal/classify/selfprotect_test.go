@@ -68,6 +68,19 @@ func TestCredentialAndSystemWriteAlwaysHigh(t *testing.T) {
 	}
 }
 
+// TestCredentialSystemWriteCaseInsensitive pins the case-insensitivity fix
+// (docs/superpowers/specs/2026-07-30-selfprotect-case-insensitivity-fix.md):
+// ~/.ssh and ~/.SSH name the same directory on a case-insensitive filesystem,
+// so an alternate-case credential path must still hit the credential-system-
+// write floor.
+func TestCredentialSystemWriteCaseInsensitive(t *testing.T) {
+	pol := policy.Default()
+	p := hook.Payload{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "cat ~/.SSH/id_rsa"}}
+	if got := Classify(p, pol).Severity; got != "high" {
+		t.Fatalf("case-insensitive credential-system-write bypass (got %s): %+v", got, p.ToolInput)
+	}
+}
+
 // TestCredentialRulesStayFailSafe asserts the credential/system-write floor
 // doesn't over-match benign paths that merely mention "aws"/"ssh"/"etc" —
 // the fail-safe requirement is over-block real secrets, not any file that
@@ -214,6 +227,27 @@ func TestClaudeProjectsWholeDirAlwaysHigh(t *testing.T) {
 // trailBoundary matched `.claude` followed directly by "/", with no further
 // look-ahead, so ANY subpath — including these two — was caught and floored
 // to high via self-protect-claude-settings.
+// TestSelfProtectCaseInsensitiveClaude pins the case-insensitivity fix from
+// docs/superpowers/specs/2026-07-30-selfprotect-case-insensitivity-fix.md:
+// ~/.claude and ~/.argus name the SAME directory on a case-insensitive
+// filesystem (macOS/Windows) regardless of casing, so an alternate-case
+// bare-dir delete must still hit the floor, not just the canonical-case form.
+func TestSelfProtectCaseInsensitiveClaude(t *testing.T) {
+	pol := policy.Default()
+	p := hook.Payload{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm -rf ~/.CLAUDE"}}
+	if got := Classify(p, pol).Severity; got != "high" {
+		t.Fatalf("case-insensitive self-protect-claude-settings bypass (got %s): %+v", got, p.ToolInput)
+	}
+}
+
+func TestSelfProtectCaseInsensitiveArgus(t *testing.T) {
+	pol := policy.Default()
+	p := hook.Payload{ToolName: "Bash", ToolInput: hook.ToolInput{Command: "rm -rf ~/.ARGUS"}}
+	if got := Classify(p, pol).Severity; got != "high" {
+		t.Fatalf("case-insensitive self-protect-argus bypass (got %s): %+v", got, p.ToolInput)
+	}
+}
+
 func TestClaudeProjectsSubpathNotSelfProtected(t *testing.T) {
 	pol := policy.Default()
 
