@@ -39,11 +39,10 @@ func checkConfiguredHarness(home string) error {
 	}
 	hooks, _ := settings["hooks"].(map[string]any)
 	preToolUse, _ := hooks["PreToolUse"].([]any)
-	entry := gateEntry(preToolUse)
+	entry, cmd := matchedGateHook(preToolUse)
 	if entry == nil {
 		return nil // no gate entry; checkHook already reported that
 	}
-	cmd := gateCommandString(entry)
 
 	configured, err := configuredHarness(cmd)
 	if err != nil {
