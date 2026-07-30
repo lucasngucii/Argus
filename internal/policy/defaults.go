@@ -144,12 +144,15 @@ func Floor() []Rule {
 			Match:  Match{Cmd: []string{"rm"}, Flags: []string{"r"}, TargetScorer: "rm_target"},
 			Reason: "recursive rm of a catastrophic target"},
 		{ID: "disk-format", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
-			// dd/diskutil are dangerous by their device argument: reading or writing
-			// a raw device (if=…, of=/dev/…) or an erase. of=/dev/ closes the
-			// write-only overwrite (`dd of=/dev/sda`, no if=). mkfs is handled by the
-			// disk-mkfs rule below — it is destructive by invocation, with no such
-			// arg to gate on, so it cannot share this ArgMatches gate.
-			Match: Match{Cmd: []string{"dd", "fdisk", "diskutil"}, ArgMatches: `if=|of=/dev/|erase`}, Reason: "disk/format"},
+			// dd/diskutil are dangerous by their device argument: writing to a raw
+			// device (of=/dev/…) or an erase. Reading a raw device into a file
+			// (`dd if=/dev/sda of=backup.img`, a device backup) is a pure read and
+			// is deliberately NOT floored — only the destination matters. of=/dev/
+			// closes the write-only overwrite (`dd of=/dev/sda`, no if=). mkfs is
+			// handled by the disk-mkfs rule below — it is destructive by
+			// invocation, with no such arg to gate on, so it cannot share this
+			// ArgMatches gate.
+			Match: Match{Cmd: []string{"dd", "fdisk", "diskutil"}, ArgMatches: `of=/dev/|erase`}, Reason: "disk/format"},
 		{ID: "disk-mkfs", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
 			// Any mkfs-family command (mkfs, mkfs.ext4, mkfs.xfs, …) formats a
 			// device — destructive by invocation, so no arg gate. matchedCommands

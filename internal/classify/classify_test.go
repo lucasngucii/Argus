@@ -467,14 +467,32 @@ func TestMkfsFamilyIsHighFloor(t *testing.T) {
 }
 
 // TestDdWriteToDeviceIsHighFloor pins the dd write-only bypass: overwriting a
-// raw device via stdin (of=/dev/...) with no if= was not matched. Reading from
-// or writing to a device must hit the high floor.
+// raw device via stdin (of=/dev/...) with no if= was not matched. Writing to
+// a device must hit the high floor; reading a device into a file (a backup)
+// is covered separately by TestDiskFormatAllowsDeviceBackup and must not.
 func TestDdWriteToDeviceIsHighFloor(t *testing.T) {
 	for _, cmd := range []string{
 		"dd if=/dev/zero of=/dev/sda", "dd of=/dev/sda bs=1M", "dd if=backup.img of=/dev/sdb",
 	} {
 		if got := sev(cmd, "/tmp"); got != "high" {
 			t.Fatalf("%q must be high, got %s", cmd, got)
+		}
+	}
+}
+
+// TestDiskFormatAllowsDeviceBackup pins the narrowing that dropped the bare
+// if= alternative from disk-format's ArgMatches: reading a raw device into a
+// file (a backup) no longer floors high, while any output to a raw device or
+// an erase still does.
+func TestDiskFormatAllowsDeviceBackup(t *testing.T) {
+	if got := sev("dd if=/dev/sda of=backup.img bs=4M", "/tmp"); got == "high" {
+		t.Fatalf("device backup (read into a file) must not floor, got %s", got)
+	}
+	for _, cmd := range []string{
+		"dd if=/dev/zero of=/dev/sda", "dd of=/dev/sda", "diskutil eraseDisk x",
+	} {
+		if got := sev(cmd, "/tmp"); got != "high" {
+			t.Fatalf("%q must stay high, got %s", cmd, got)
 		}
 	}
 }
