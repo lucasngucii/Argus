@@ -140,3 +140,21 @@ func TestFlattenHeaderCmdSubstObfuscates(t *testing.T) {
 		t.Fatal("literal case must not be obfuscated")
 	}
 }
+
+func TestArithmTestLetCmdSubstObfuscates(t *testing.T) {
+	for _, cmd := range []string{
+		"(( $(rm -rf /) ))",
+		"let x=$(rm -rf /)",
+		"[[ $(rm -rf /) ]]",
+	} {
+		if !Extract(cmd).Obfuscated {
+			t.Fatalf("%q: command substitution must set Obfuscated", cmd)
+		}
+	}
+	// Negative: plain arithmetic/test/let must stay clean.
+	for _, cmd := range []string{"(( 1 + 2 ))", "[[ -f myfile ]]", "let x=1"} {
+		if Extract(cmd).Obfuscated {
+			t.Fatalf("%q: benign construct must not be obfuscated", cmd)
+		}
+	}
+}

@@ -162,6 +162,13 @@ func processStmt(stmt *syntax.Stmt, vars map[string]string, f *Facts) {
 		processStmt(c.Stmt, vars, f)
 	case *syntax.CoprocClause:
 		processStmt(c.Stmt, vars, f)
+	case *syntax.ArithmCmd, *syntax.LetClause, *syntax.TestClause:
+		// No nested *Stmt to recurse, but a command substitution inside the
+		// expression executes. Scan the rendered source (see hasCmdSubst); pass
+		// the whole stmt so the full construct is rendered.
+		if hasCmdSubst(stmt) {
+			f.Obfuscated = true
+		}
 	}
 }
 
@@ -243,6 +250,22 @@ func resolveWord(w *syntax.Word, vars map[string]string) (string, bool) {
 		return "", true
 	}
 	return resolveParts(w.Parts, vars)
+}
+
+// hasCmdSubst reports whether a node's source text carries a command
+// substitution (`$(...)` or backticks). Used for arithmetic/test/let
+// constructs whose expression trees (ArithmExpr/TestExpr) are not a flat word
+// list: rendering the node back to source and substring-scanning is coarse but
+// fail-closed — a `$(...)` inside `(( … ))` / `[[ … ]]` / `let …` executes when
+// the shell evaluates it, so it must flag obfuscation. A render error fails
+// closed (treated as containing one).
+func hasCmdSubst(node syntax.Node) bool {
+	var b strings.Builder
+	if err := syntax.NewPrinter().Print(&b, node); err != nil {
+		return true
+	}
+	s := b.String()
+	return strings.Contains(s, "$(") || strings.Contains(s, "`")
 }
 
 func resolveParts(parts []syntax.WordPart, vars map[string]string) (string, bool) {
