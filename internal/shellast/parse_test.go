@@ -93,3 +93,30 @@ func TestParseFailurePopulatesRaw(t *testing.T) {
 		t.Fatalf("parse-fail path wrong: %+v", f)
 	}
 }
+
+func TestFlattenCompoundBodies(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  string
+	}{
+		{"if-then", "if true; then rm -rf /; fi; ls /tmp"},
+		{"if-cond", "if rm -rf /; then echo x; fi"},
+		{"if-elif", "if false; then :; elif rm -rf /; then :; fi"},
+		{"if-else", "if false; then :; else rm -rf /; fi"},
+		{"for-do", "for f in a b; do rm -rf /; done"},
+		{"while-do", "while true; do rm -rf /; break; done"},
+		{"until-do", "until false; do rm -rf /; done"},
+		{"case-arm", "case x in x) rm -rf /;; esac"},
+		{"func-body", "rmx(){ rm -rf /; }"},
+		{"time", "time rm -rf /"},
+		{"coproc", "coproc rm -rf /"},
+		{"nested", "if true; then for f in x; do rm -rf /; done; fi"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !hasCmd(Extract(tc.cmd), "rm") {
+				t.Fatalf("%q: rm must surface in Commands", tc.cmd)
+			}
+		})
+	}
+}

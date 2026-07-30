@@ -108,6 +108,45 @@ func processStmt(stmt *syntax.Stmt, vars map[string]string, f *Facts) {
 		for _, s := range c.Stmts {
 			processStmt(s, vars, f)
 		}
+	case *syntax.IfClause:
+		// Both branches and the condition run; walk the elif/else chain.
+		for cur := c; cur != nil; cur = cur.Else {
+			for _, s := range cur.Cond {
+				processStmt(s, vars, f)
+			}
+			for _, s := range cur.Then {
+				processStmt(s, vars, f)
+			}
+		}
+	case *syntax.WhileClause:
+		for _, s := range c.Cond {
+			processStmt(s, vars, f)
+		}
+		for _, s := range c.Do {
+			processStmt(s, vars, f)
+		}
+	case *syntax.ForClause:
+		// Loop-header words are handled in a later step; the body's commands
+		// run and must be seen. The loop variable is deliberately left unbound
+		// (see spec: an unresolved `$f` asks, consistent with any unknown var).
+		for _, s := range c.Do {
+			processStmt(s, vars, f)
+		}
+	case *syntax.CaseClause:
+		// We can't know which arm matches at classify time, so surface all.
+		for _, item := range c.Items {
+			for _, s := range item.Stmts {
+				processStmt(s, vars, f)
+			}
+		}
+	case *syntax.FuncDecl:
+		// Defining a function with a dangerous body escalates even before it is
+		// called — a gate cannot know a later call won't happen (spec: accepted).
+		processStmt(c.Body, vars, f)
+	case *syntax.TimeClause:
+		processStmt(c.Stmt, vars, f)
+	case *syntax.CoprocClause:
+		processStmt(c.Stmt, vars, f)
 	}
 }
 
