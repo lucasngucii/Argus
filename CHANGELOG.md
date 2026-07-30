@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.1.9
+
+### Security fixes
+
+- **Fixed a catastrophic fail-open**: a dangerous command wrapped in `if`/`for`/`while`/`case`, a
+  function body, `time`, or `coproc` was invisible to the classifier — `if true; then rm -rf /; fi`
+  classified `safe`. Every executed statement inside these constructs is now surfaced and
+  inspected, including a command substitution in a loop/case header, an `(( ))`/`[[ ]]`/`let`
+  expression, a redirect target, or a heredoc body.
+- **Fixed an `opaque-exec` false positive**: the rule's `-c` detection was unanchored and
+  case-insensitive, so any command containing `-c `/`-C ` (e.g. `git -C /repo show HEAD:file`,
+  git's repo-dir flag) was wrongly flagged as an opaque shell subshell.
+- **`disk-format` no longer floors a device backup**: `dd if=/dev/sda of=backup.img` (a pure read
+  into a file) is no longer treated as a destructive disk operation; writing to a raw device or an
+  erase still floors.
+- **`docker-service` no longer asks on read-only subcommands**: `docker service ls/ps/inspect` and
+  similar views no longer prompt; mutating operations (`create`, `prune`, `down`, …) still do.
+
+### Changes
+
+- **A pure metadata listing (`ls`/`stat`/`du`) of Argus's own config, the Claude Code hook wiring,
+  or a credential directory is now allowed** instead of always denied — viewing filenames and
+  metadata doesn't disarm Argus or leak a secret. Every write, delete, content read (`cat`, `grep`,
+  …), and `git` invocation against these paths is still floored, Bash-only.
+
 ## v0.1.8
 
 ### Security fixes
