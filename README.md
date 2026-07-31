@@ -11,13 +11,31 @@ Local-first · single static binary · pure-Go · MIT.
 ## Install
 
 ```bash
-npm install -g @agrus/argus
+npm install -g @lucasngucii/argus
 argus init      # sets up ~/.argus/ and wires the Claude Code hook (idempotent)
 argus doctor    # confirm it's healthy
 ```
 
 Prebuilt for macOS & Linux (arm64/x64); anywhere else:
 `go install github.com/lucasngucii/argus/cmd/argus@latest`.
+
+### Verifying your install
+
+Argus sits in front of every command your agent runs — so verify the binary
+rather than assume it. Don't take our word for any of this:
+
+- **npm provenance.** Releases are published with
+  [provenance](https://docs.npmjs.com/generating-provenance-statements) (SLSA
+  build attestation) — each package links back to the exact GitHub Actions run
+  and commit that built it. Check the "Provenance" panel on the npm page.
+- **Checksums.** Every GitHub Release ships `checksums.txt` (SHA-256 per archive).
+- **Build from source** (needs no prebuilt binary):
+  `go install github.com/lucasngucii/argus/cmd/argus@latest` — pure-Go,
+  `CGO_ENABLED=0`.
+
+The npm launcher is a dependency-free, no-network shim that only execs the
+platform binary npm installed; its integrity is covered by npm's registry
+hashes plus the provenance above.
 
 ## Use
 
@@ -100,6 +118,10 @@ creates an audit trail, it doesn't replace Claude Code's permissions or your OS
 sandbox. It sees only the inline command: an interactive `psql` session's later
 `DROP`, or an opaque `bash script.sh`, escalate to `ask` rather than being
 inspected further.
+
+The full threat model — what Argus does and does **not** protect you from,
+including the blast radius of a compromised Argus binary itself — and how to
+report a vulnerability are in [`SECURITY.md`](SECURITY.md).
 
 ## Development
 
