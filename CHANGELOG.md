@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.1.10
+
+Trust-hardening release — no engine or classifier changes; the verdicts are
+identical. This makes the supply chain verifiable and the trust model explicit.
+
+### Supply chain
+
+- **npm packages now ship with [provenance](https://docs.npmjs.com/generating-provenance-statements)**
+  (SLSA build attestation): every published package links back to the exact
+  commit and GitHub Actions run that built it, so the prebuilt binary can be
+  traced to source rather than trusted blindly.
+
+### Changes
+
+- **Renamed the npm scope from `@agrus/argus` to `@lucasngucii/argus`.** The old
+  scope did not match the `argus` binary or the `lucasngucii` author and read as
+  a typosquat signal. **Install with `npm install -g @lucasngucii/argus`** — the
+  `@agrus` scope is deprecated. The repository URL casing was normalized to
+  match the Go module path.
+- **Added [`SECURITY.md`](SECURITY.md)**: a plain-spoken threat model (what Argus
+  does and does not protect against, including the blast radius of a compromised
+  Argus binary), private vulnerability reporting, and a "verify what you
+  installed" guide (provenance, checksums, build from source).
+
 ## v0.1.9
 
 ### Security fixes
