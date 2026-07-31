@@ -52,7 +52,7 @@ This split defines the phasing.
 
 ### Phase 0 — build + self-protection (do first)
 - Add `windows amd64`/`windows arm64` to build-dist.sh (keep CGO_ENABLED=0).
-- Add `@agrus/argus-win32-x64`/`-win32-arm64` to package.json + set-versions.mjs.
+- Add `@lucasngucii/argus-win32-x64`/`-win32-arm64` to package.json + set-versions.mjs.
 - Fix self-protect separators to `[/\\]`; golden tests for backslash paths.
 - Split `pathHasSegment` on both `/` and `\`.
 

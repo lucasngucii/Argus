@@ -7,7 +7,7 @@
 const { execFileSync } = require("child_process");
 
 function resolveBinary() {
-  const pkg = `@agrus/argus-${process.platform}-${process.arch}`;
+  const pkg = `@lucasngucii/argus-${process.platform}-${process.arch}`;
   const file = process.platform === "win32" ? "argus.exe" : "argus";
   try {
     return require.resolve(`${pkg}/bin/${file}`);
@@ -20,7 +20,7 @@ const bin = resolveBinary();
 if (!bin) {
   process.stderr.write(
     `argus: no prebuilt binary for ${process.platform}-${process.arch}.\n` +
-      `Download from https://github.com/lucasngucii/Argus/releases or run:\n` +
+      `Download from https://github.com/lucasngucii/argus/releases or run:\n` +
       `  go install github.com/lucasngucii/argus/cmd/argus@latest\n`,
   );
   process.exit(1);

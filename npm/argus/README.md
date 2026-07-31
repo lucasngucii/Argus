@@ -1,4 +1,4 @@
-# @agrus/argus
+# @lucasngucii/argus
 
 > **Your AI coding agent has a shell — and tools.** `rm -rf /`, `curl … | sh`, a
 > force-push to `main`, an MCP tool that deletes a file or reads your `~/.ssh`
@@ -11,7 +11,7 @@ toolchain needed.
 ## Install
 
 ```bash
-npm install -g @agrus/argus
+npm install -g @lucasngucii/argus
 argus init      # set up ~/.argus/ and wire the Claude Code hook
 argus doctor    # confirm it's healthy
 ```
@@ -52,6 +52,6 @@ rule: git-danger      severity: medium   verdict: ask
 ## Learn more
 
 Full docs, the policy-authoring guide, and the research behind the built-in
-rules: <https://github.com/lucasngucii/Argus>. MIT licensed.
+rules: <https://github.com/lucasngucii/argus>. MIT licensed.
 
-Changelog: <https://github.com/lucasngucii/Argus/blob/main/CHANGELOG.md>.
+Changelog: <https://github.com/lucasngucii/argus/blob/main/CHANGELOG.md>.

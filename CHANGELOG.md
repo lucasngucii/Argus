@@ -57,4 +57,4 @@
 
 ## v0.1.7 and earlier
 
-See [GitHub Releases](https://github.com/lucasngucii/Argus/releases).
+See [GitHub Releases](https://github.com/lucasngucii/argus/releases).
