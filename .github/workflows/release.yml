@@ -4,6 +4,7 @@ on:
     tags: ["v*"]
 permissions:
   contents: write
+  id-token: write # npm provenance (SLSA attestation) via OIDC
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -30,11 +31,11 @@ jobs:
       - name: Publish platform packages
         run: |
           for s in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
-            npm publish "./npm/argus-$s" --access public
+            npm publish "./npm/argus-$s" --access public --provenance
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish main package
-        run: npm publish ./npm/argus --access public
+        run: npm publish ./npm/argus --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
