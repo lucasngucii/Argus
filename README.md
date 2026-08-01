@@ -19,6 +19,39 @@ argus doctor    # confirm it's healthy
 Prebuilt for macOS & Linux (arm64/x64); anywhere else:
 `go install github.com/lucasngucii/argus/cmd/argus@latest`.
 
+### Codex
+
+```bash
+argus init --harness=codex   # wires the PreToolUse hook (idempotent)
+```
+
+`init` can't finish activating the hook for you — Codex requires two manual
+steps by design:
+
+1. Add to your Codex config file:
+   ```toml
+   [features]
+   hooks = true
+   ```
+2. Trust the hook: run `/hooks` in a Codex session.
+
+`argus doctor` FAILs if the flag isn't on, and prints a WARN that trust can't
+be confirmed from disk — it can only remind you to have run `/hooks`.
+
+**Codex coverage.** Codex's PreToolUse hook fires for exactly four tool
+classes: `shell` (Bash), `unified_exec`, `apply_patch` (Codex ≥ 0.123), and
+MCP tool calls — Argus gates all of those on the full severity ladder. Every
+other native Codex tool, and every hosted tool (web search, etc.), never
+fires the hook at all, so self-protection on Codex's own file-reads is
+unenforced there; a Bash-mediated read (`cat ~/.ssh/id_rsa`) or an MCP tool
+call is still caught. Codex's hook contract is deny-only, so an Argus `ask`
+verdict collapses to `deny` on Codex rather than prompting. Argus is inert on
+Codex until both the config flag above is set and the hook is trusted.
+
+This adapter is verified against Codex's public documentation, not yet
+against a live `codex` CLI — confirm the details above against your
+installed version.
+
 ### Verifying your install
 
 Argus sits in front of every command your agent runs — so verify the binary
@@ -86,8 +119,8 @@ rule: git-danger      severity: medium   verdict: ask
 
 | Command | What it does |
 |---|---|
-| `argus init` | Set up `~/.argus/` and wire the hook. |
-| `argus doctor` | Verify the install; warns if the policy dropped baseline coverage. |
+| `argus init` | Set up `~/.argus/` and wire the hook. Claude Code by default; `--harness=codex` wires Codex. |
+| `argus doctor` | Verify the install; warns if the policy dropped baseline coverage. Probes every installed harness. |
 | `argus explain <cmd>` | Dry-run one command: severity, firing rule, verdict, parsed facts. |
 | `argus stats [--jsonl]` | Decision digest / JSONL export. |
 | `argus serve` | Local web UI (loopback-only): live tail, stats, explain, policy editor, replay. |

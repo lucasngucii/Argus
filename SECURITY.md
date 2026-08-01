@@ -47,6 +47,25 @@ agent harness's own permissions, or good judgment.
   credential paths (`~/.ssh`, `~/.aws`, `~/.argus`, `~/.claude`) from writes,
   deletes, and content reads.
 
+### Codex coverage
+
+The threat model above is the same classification layer, not a sandbox, on
+Codex — but the surface it can see is narrower than Claude Code's. Codex's
+PreToolUse hook fires for exactly four tool classes: `shell` (Bash),
+`unified_exec`, `apply_patch` (Codex ≥ 0.123), and MCP tool calls. Argus gates
+all four on the full severity ladder. Every other native Codex tool, and
+every hosted tool (web search, etc.), never fires the hook at all, so
+self-protection on Codex's own file-reads is unenforced there — a
+Bash-mediated read (`cat ~/.ssh/id_rsa`) or an MCP tool call is still caught.
+Codex's hook contract is deny-only: an Argus `ask` verdict collapses to
+`deny` on Codex rather than prompting, since Codex has no interactive-ask
+semantics and downgrading to `allow` would fail open. Argus is completely
+inert on Codex until you both enable the hooks feature flag and trust the
+hook — `argus doctor` FAILs on the former and WARNs on the latter, since
+trust state isn't verifiable from disk. This adapter is verified against
+Codex's public documentation, not yet against a live `codex` CLI — confirm
+the details above against your installed version.
+
 ### What Argus does NOT protect you from
 
 - **A compromised or malicious Argus binary itself.** This is the inherent cost
