@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.11
+
+Re-release of v0.1.10 — that version published incompletely (the two macOS
+`darwin` platform packages were missing, so `npm i -g @lucasngucii/argus` failed
+on macOS). v0.1.11 republishes the full platform matrix.
+
+### Fixed
+
+- **The release job now fails closed on a partial publish.** The platform-package
+  publish loop did not abort when a single `npm publish` failed, so the main
+  package could ship on top of a missing platform binary — exactly what produced
+  the broken v0.1.10 on macOS. Each publish now retries a transient error and,
+  if it ultimately fails, aborts the whole release rather than shipping a partial
+  matrix.
+
 ## v0.1.10
 
 Trust-hardening release — no engine or classifier changes; the verdicts are
