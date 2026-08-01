@@ -35,6 +35,34 @@ func Canonical(name string) (string, error) {
 	}
 }
 
+// Shape translates an Argus verdict ("allow"/"ask"/"deny") into the strongest
+// verdict the named harness can actually honor. It may only ever return a
+// verdict equal to or MORE restrictive than its input (allow < ask < deny),
+// never looser. Claude Code honors all three (identity); a deny-only harness
+// collapses "ask" to "deny", because emitting an "ask" the harness ignores
+// would let a medium command run unprompted (a silent allow). Gate applies
+// Shape BEFORE recording and emitting, so the stored verdict is the one the
+// harness enforced.
+func Shape(name, verdict string) string {
+	switch name {
+	case "claude-code":
+		return verdict
+	default:
+		// The safe floor for anything a harness may not honor is deny; only a
+		// plain "allow" passes through unchanged.
+		if verdict == "allow" {
+			return "allow"
+		}
+		return "deny"
+	}
+}
+
+// registeredHarnesses is the list Shape's cross-adapter test iterates, so a new
+// adapter cannot opt out of the more-restrictive-only assertion. Keep it in
+// sync with Canonical. A future adapter also adds Canonical/Parse/Emit/Shape
+// cases here and cli.Wire/Probe cases.
+func registeredHarnesses() []string { return []string{"claude-code"} }
+
 // Parse turns a harness's raw PreToolUse payload into the normalized
 // hook.Payload the classifier consumes. Unknown name → fail-closed error.
 func Parse(name string, r io.Reader) (hook.Payload, error) {
