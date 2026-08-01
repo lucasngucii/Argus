@@ -43,6 +43,9 @@ func Doctor(home string, w io.Writer) int {
 		// Trust is not disk-verifiable — surface it as a WARN so a PASS above is
 		// never read as "definitely active" when the hook may be untrusted-inert.
 		fmt.Fprintln(w, "WARN hook (codex): the hook must be trusted (run /hooks in Codex) — Argus can't verify trust from disk")
+		// The Codex matcher is Bash-only today — surface the coverage gap so a
+		// PASS above is never read as "everything Codex can gate is gated".
+		fmt.Fprintln(w, "WARN hook (codex): only Bash commands are gated on Codex; MCP / apply_patch / unified_exec tool calls are NOT yet gated")
 	}
 	if !claudeInstalled && !codexInstalled {
 		// fresh box: no harness detected yet, still surface an actionable FAIL

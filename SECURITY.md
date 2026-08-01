@@ -66,11 +66,16 @@ not at parity with Claude Code's matcher (`Bash`/`Write`/`Edit`/`mcp__*`).
 Codex's hook contract is deny-only: an Argus `ask` verdict collapses to
 `deny` on Codex rather than prompting, since Codex has no interactive-ask
 semantics and downgrading to `allow` would fail open. Argus is completely
-inert on Codex until you both enable the hooks feature flag and trust the
-hook — `argus doctor` FAILs on the former and WARNs on the latter, since
-trust state isn't verifiable from disk. This adapter is verified against
-Codex's public documentation, not yet against a live `codex` CLI — confirm
-the details above against your installed version.
+inert on Codex until you at least enable the hooks feature flag and trust the
+hook — `argus doctor` FAILs on the former and WARNs on both that and on the
+matcher's Bash-only scope, since trust state isn't verifiable from disk.
+"Flag enabled and trusted" is what we've confirmed is necessary, but it is
+not confirmed to be the *complete* activation checklist: whether Argus's
+`~/.codex/hooks.json` entry takes precedence over, or is shadowed by, an
+inline `[hooks]` block in `config.toml` is unconfirmed against a live Codex
+install — don't treat flag+trust as exhaustive. This adapter is verified
+against Codex's public documentation, not yet against a live `codex` CLI —
+confirm the details above against your installed version.
 
 ### What Argus does NOT protect you from
 

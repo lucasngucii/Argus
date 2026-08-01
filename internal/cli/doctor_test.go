@@ -80,6 +80,41 @@ func TestDoctorFailsOnUnknownConfiguredHarness(t *testing.T) {
 	}
 }
 
+// TestDoctorBothHarnessesInstalled pins Doctor's multi-harness fan-out: when
+// both ~/.claude AND ~/.codex are present (a machine that runs both agents),
+// Doctor must probe and report BOTH hook lines, and the Codex-specific trust
+// and matcher-scope WARNs must both appear.
+func TestDoctorBothHarnessesInstalled(t *testing.T) {
+	home := t.TempDir()
+	if err := Init(home, "claude-code"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Wire("codex", home); err != nil {
+		t.Fatal(err)
+	}
+	writeCodexConfig(t, home, "[features]\nhooks = true\n")
+
+	var out bytes.Buffer
+	code := Doctor(home, &out)
+	report := out.String()
+
+	if code != 0 {
+		t.Fatalf("Doctor with both harnesses fully configured = %d, want 0\n%s", code, report)
+	}
+	if !strings.Contains(report, "hook (claude-code)") {
+		t.Errorf("missing claude-code hook line:\n%s", report)
+	}
+	if !strings.Contains(report, "hook (codex)") {
+		t.Errorf("missing codex hook line:\n%s", report)
+	}
+	if !strings.Contains(report, "WARN hook (codex)") || !strings.Contains(report, "trusted") {
+		t.Errorf("missing codex trust WARN:\n%s", report)
+	}
+	if !strings.Contains(report, "Bash") || !strings.Contains(report, "MCP") {
+		t.Errorf("missing codex matcher-scope WARN naming Bash-only coverage:\n%s", report)
+	}
+}
+
 func TestDoctorWarnsBaselineDrift(t *testing.T) {
 	home := t.TempDir()
 	argus := filepath.Join(home, ".argus")

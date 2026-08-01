@@ -28,7 +28,9 @@ argus init --harness=codex   # wires the PreToolUse hook (idempotent)
 `init` can't finish activating the hook for you — Codex requires two manual
 steps by design:
 
-1. Add to your Codex config file:
+1. Add to the **user-level** `~/.codex/config.toml` (a repo-local
+   `.codex/config.toml` is not confirmed to reliably enable hooks, and may
+   silently fail):
    ```toml
    [features]
    hooks = true
@@ -37,6 +39,11 @@ steps by design:
 
 `argus doctor` FAILs if the flag isn't on, and prints a WARN that trust can't
 be confirmed from disk — it can only remind you to have run `/hooks`.
+Flag-on plus trusted is what we've confirmed is required; it may not be the
+complete list. In particular, whether Argus's `~/.codex/hooks.json` entry
+takes precedence over — or is shadowed by — an inline `[hooks]` block in
+`config.toml` is not yet confirmed against a live Codex install; don't treat
+"flag + trust" as an exhaustive activation checklist.
 
 **Codex coverage — today, Bash only.** Codex's PreToolUse hook is *capable*
 of firing for four tool classes: `shell` (Bash), `unified_exec`, `apply_patch`
@@ -51,8 +58,9 @@ verification note's PENDING items). Do not treat MCP as gated on Codex, and
 do not assume parity with Claude Code, whose matcher covers
 `Bash`/`Write`/`Edit`/`mcp__*`. Codex's hook contract is deny-only, so an
 Argus `ask` verdict collapses to `deny` on Codex rather than prompting.
-Argus is inert on Codex until both the config flag above is set and the hook
-is trusted.
+Argus is inert on Codex until at least both the config flag above is set and
+the hook is trusted (see the hedge above: that may not be the complete
+activation checklist).
 
 This adapter is verified against Codex's public documentation, not yet
 against a live `codex` CLI — confirm the details above against your
