@@ -25,14 +25,17 @@ Adds Codex as a second supported harness alongside Claude Code.
 
 ### Codex coverage — read before relying on this
 
-Codex's PreToolUse hook fires for exactly four tool classes: `shell` (Bash),
-`unified_exec`, `apply_patch` (Codex ≥ 0.123), and MCP tool calls. Argus
-gates all four on the full severity ladder. Every other native Codex tool,
-and every hosted tool (web search, etc.), never fires the hook at all — so
-self-protection on Codex's own file-reads is unenforced, though
-Bash-mediated reads (`cat ~/.ssh/id_rsa`) and MCP tool calls are still
-caught. This is not parity with Claude Code's coverage; it's the boundary of
-what Codex's own hook contract exposes.
+Codex's PreToolUse hook CAN fire for four tool classes: `shell` (Bash),
+`unified_exec`, `apply_patch` (Codex ≥ 0.123), and MCP tool calls — but
+Argus's Codex matcher in this release wires only `tool_name == "Bash"`. **Only
+Bash commands are gated on Codex today**, on the full severity ladder, so a
+Bash-mediated read (`cat ~/.ssh/id_rsa`) is still caught. **MCP tool calls,
+`apply_patch`, and `unified_exec` are not yet wired and run completely
+ungated on Codex** — this is a known gap, tracked for a follow-up that widens
+the matcher once the exact `tool_name` each of those reports is confirmed
+against a live `codex` CLI (see the verification note's PENDING items). Do
+not treat MCP as gated on Codex, and do not read this as parity with Claude
+Code's matcher (`Bash`/`Write`/`Edit`/`mcp__*`).
 
 This adapter was verified against Codex's public documentation and issue
 tracker, not yet against a live `codex` CLI — confirm the flag name, default

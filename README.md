@@ -38,15 +38,21 @@ steps by design:
 `argus doctor` FAILs if the flag isn't on, and prints a WARN that trust can't
 be confirmed from disk — it can only remind you to have run `/hooks`.
 
-**Codex coverage.** Codex's PreToolUse hook fires for exactly four tool
-classes: `shell` (Bash), `unified_exec`, `apply_patch` (Codex ≥ 0.123), and
-MCP tool calls — Argus gates all of those on the full severity ladder. Every
-other native Codex tool, and every hosted tool (web search, etc.), never
-fires the hook at all, so self-protection on Codex's own file-reads is
-unenforced there; a Bash-mediated read (`cat ~/.ssh/id_rsa`) or an MCP tool
-call is still caught. Codex's hook contract is deny-only, so an Argus `ask`
-verdict collapses to `deny` on Codex rather than prompting. Argus is inert on
-Codex until both the config flag above is set and the hook is trusted.
+**Codex coverage — today, Bash only.** Codex's PreToolUse hook is *capable*
+of firing for four tool classes: `shell` (Bash), `unified_exec`, `apply_patch`
+(Codex ≥ 0.123), and MCP tool calls. Argus's Codex matcher currently wires
+only `tool_name == "Bash"`, so **only Bash commands are gated on Codex
+today** — on the full severity ladder, so a Bash-mediated read
+(`cat ~/.ssh/id_rsa`) is still caught. **MCP tool calls, `apply_patch`, and
+`unified_exec` are not yet wired for Codex and run ungated** — this is a
+known gap, not a design choice; closing it needs the matcher widened and a
+live capture of the exact `tool_name` each of those reports (see the
+verification note's PENDING items). Do not treat MCP as gated on Codex, and
+do not assume parity with Claude Code, whose matcher covers
+`Bash`/`Write`/`Edit`/`mcp__*`. Codex's hook contract is deny-only, so an
+Argus `ask` verdict collapses to `deny` on Codex rather than prompting.
+Argus is inert on Codex until both the config flag above is set and the hook
+is trusted.
 
 This adapter is verified against Codex's public documentation, not yet
 against a live `codex` CLI — confirm the details above against your

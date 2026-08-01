@@ -29,9 +29,11 @@ func RunInit(argv []string, home string, w io.Writer) int {
 		fmt.Fprintf(w, "argus: init: %v\n", err)
 		return 1
 	}
-	fmt.Fprintln(w, "argus: initialized ~/.argus and wired the PreToolUse hook in ~/.claude/settings.json")
 	if *harness == "codex" {
+		fmt.Fprintln(w, "argus: initialized ~/.argus")
 		fmt.Fprint(w, codexInitNotice)
+	} else {
+		fmt.Fprintln(w, "argus: initialized ~/.argus and wired the PreToolUse hook in ~/.claude/settings.json")
 	}
 
 	if *noServe {
