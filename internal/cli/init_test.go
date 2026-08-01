@@ -200,8 +200,8 @@ func TestInitHealsStaleMatcher(t *testing.T) {
 	if err := Init(home, "claude-code"); err != nil {
 		t.Fatal(err)
 	}
-	setGateMatcher(t, home, "Bash|Write|Edit") // simulate an old install
-	if err := Init(home, "claude-code"); err != nil {           // re-init must heal
+	setGateMatcher(t, home, "Bash|Write|Edit")        // simulate an old install
+	if err := Init(home, "claude-code"); err != nil { // re-init must heal
 		t.Fatal(err)
 	}
 	m := readGateMatcher(t, home)
