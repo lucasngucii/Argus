@@ -38,6 +38,42 @@ func TestCodexProbePassesForEitherFlagKey(t *testing.T) {
 	}
 }
 
+func TestCodexProbeFailClosedOnFlagInsideMultilineString(t *testing.T) {
+	// A [features] header and a hooks = true line that appear INSIDE a TOML
+	// multiline basic string body must not be read as real TOML: they are
+	// string content, not a table header/key, so the probe must FAIL.
+	body := "[other]\n" +
+		"note = \"\"\"\n" +
+		"[features]\n" +
+		"hooks = true\n" +
+		"\"\"\"\n" +
+		"more = 1\n"
+	home := t.TempDir()
+	_ = Wire("codex", home)
+	writeCodexConfig(t, home, body)
+	if Probe("codex", home) == nil {
+		t.Error("hooks=true inside a multiline string body must not false-PASS")
+	}
+}
+
+func TestCodexProbeFailClosedOnStateLeakingPastClosedMultilineString(t *testing.T) {
+	// A bare "[features]"-looking line inside a multiline string must not
+	// leave the scanner believing it's still inside [features] after the
+	// string closes — an unrelated hooks = true AFTER the closing """ must
+	// not false-PASS off state that leaked past the string boundary.
+	body := "[other]\n" +
+		"note = \"\"\"\n" +
+		"[features]\n" +
+		"\"\"\"\n" +
+		"hooks = true\n"
+	home := t.TempDir()
+	_ = Wire("codex", home)
+	writeCodexConfig(t, home, body)
+	if Probe("codex", home) == nil {
+		t.Error("hooks=true after a closed multiline string must not false-PASS via leaked [features] state")
+	}
+}
+
 func TestCodexProbeFailClosedOnMisplacedFlag(t *testing.T) {
 	// key under a DIFFERENT table must NOT PASS (it doesn't enable hooks).
 	tests := []string{
