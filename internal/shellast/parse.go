@@ -134,18 +134,7 @@ func processStmt(stmt *syntax.Stmt, vars map[string]string, f *Facts) {
 			processStmt(s, vars, f)
 		}
 	case *syntax.ForClause:
-		// A command substitution in the loop list (`for f in $(cmd)`) executes;
-		// resolve each list word so an unresolved expansion flags obfuscation.
-		if wi, ok := c.Loop.(*syntax.WordIter); ok {
-			for _, w := range wi.Items {
-				if _, ok := resolveWord(w, vars); !ok {
-					f.Obfuscated = true
-				}
-			}
-		}
-		for _, s := range c.Do {
-			processStmt(s, vars, f)
-		}
+		processForLoop(c, vars, f)
 	case *syntax.CaseClause:
 		// The subject word and every pattern undergo expansion (including a
 		// command substitution that executes) before matching; resolve them.
@@ -177,6 +166,65 @@ func processStmt(stmt *syntax.Stmt, vars map[string]string, f *Facts) {
 		if hasCmdSubst(stmt) {
 			f.Obfuscated = true
 		}
+	}
+}
+
+// processForLoop walks a `for` loop, binding its variable so the body is seen
+// with real values. When the in-list resolves to literals, it binds the loop
+// variable to each value and walks the body per value — so a body that uses the
+// variable (`head "$f"`) resolves instead of reading as an unresolved evasion
+// signal, and a concrete dangerous target (`rm -rf /`) surfaces for the floor.
+// When any list word is unresolved (a command substitution or unknown
+// expansion), the loop's values are unknown: it flags obfuscation and walks the
+// body once with the variable UNBOUND, so a body reference stays fail-closed. A
+// C-style `for ((;;))` carries no value list — its body is walked once. The
+// prior binding of the variable's name is saved and restored so a same-named
+// variable outside the loop is unaffected.
+func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
+	wi, ok := c.Loop.(*syntax.WordIter)
+	if !ok || wi.Name == nil {
+		for _, s := range c.Do {
+			processStmt(s, vars, f)
+		}
+		return
+	}
+
+	name := wi.Name.Value
+	values := make([]string, 0, len(wi.Items))
+	allResolved := true
+	for _, w := range wi.Items {
+		v, ok := resolveWord(w, vars)
+		if !ok {
+			f.Obfuscated = true
+			allResolved = false
+		}
+		values = append(values, v)
+	}
+
+	saved, had := vars[name]
+	defer func() {
+		if had {
+			vars[name] = saved
+		} else {
+			delete(vars, name)
+		}
+	}()
+
+	if allResolved && len(values) > 0 {
+		for _, v := range values {
+			vars[name] = v
+			for _, s := range c.Do {
+				processStmt(s, vars, f)
+			}
+		}
+		return
+	}
+	// Unresolved (or empty) list: the values are unknown, so walk the body once
+	// with the variable unbound — any reference to it stays unresolved and the
+	// loop is already flagged obfuscated above.
+	delete(vars, name)
+	for _, s := range c.Do {
+		processStmt(s, vars, f)
 	}
 }
 

@@ -633,16 +633,33 @@ func TestCompoundHeaderObfuscationEscalates(t *testing.T) {
 	}
 }
 
-// TestCompoundAcceptedTradeoffs locks the two known, intentional costs.
-func TestCompoundAcceptedTradeoffs(t *testing.T) {
-	// A for loop referencing its own loop variable asks (unresolved var),
-	// consistent with any unknown-variable reference — NOT safe, NOT high.
-	if got := sev("for f in a b; do echo $f; done", "/tmp"); got != "medium" {
-		t.Fatalf("loop-var reference must be medium, got %s", got)
+// TestCompoundLoopVarBinding locks the for-loop variable-binding behavior.
+func TestCompoundLoopVarBinding(t *testing.T) {
+	// A for loop over a LITERAL list binds its variable to those values, so a
+	// body that uses the variable resolves and stays safe — the loop var is not
+	// an unknown-variable evasion signal. (This was previously escalated to an
+	// unnecessary ask.)
+	if got := sev(`for f in a b; do echo "$f"; done`, "/tmp"); got != "safe" {
+		t.Fatalf("literal-list loop var must be safe, got %s", got)
+	}
+	// But when the LIST itself is unresolved, the values are unknown, so the
+	// fail-closed escalation stays.
+	if got := sev(`for f in $UNKNOWN; do echo "$f"; done`, "/tmp"); got != "medium" {
+		t.Fatalf("unresolved-list loop must be medium, got %s", got)
+	}
+	// A bare unknown-variable reference (outside a for loop that binds it) is
+	// still escalated — it could be `$X` set to a dangerous command elsewhere.
+	if got := sev("echo $MYSTERY", "/tmp"); got != "medium" {
+		t.Fatalf("bare unknown var must be medium, got %s", got)
 	}
 	// A benign loop with no var reference and no danger stays safe.
 	if got := sev("for f in a b; do ls; done", "/tmp"); got != "safe" {
 		t.Fatalf("benign literal loop must be safe, got %s", got)
+	}
+	// A literal-list loop whose body is dangerous still surfaces and floors:
+	// binding the var makes `rm -rf /` concrete, never hides it.
+	if got := sev(`for f in / /etc; do rm -rf "$f"; done`, "/tmp"); rank(got) < rank("high") {
+		t.Fatalf("dangerous literal-list loop must be high, got %s", got)
 	}
 	// Defining a benign function stays safe.
 	if got := sev("deploy(){ git push origin main; }", "/tmp"); got != "safe" {

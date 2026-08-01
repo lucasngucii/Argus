@@ -141,6 +141,54 @@ func TestFlattenHeaderCmdSubstObfuscates(t *testing.T) {
 	}
 }
 
+// A for-loop whose list resolves to literals binds its loop variable to those
+// values, so a body that USES the variable is not an evasion signal. Before this
+// binding, `for f in a b c; do head "$f"; done` was wrongly flagged obfuscated
+// (the loop var read as an unresolved expansion), forcing a needless ask.
+func TestForLoopBindsLiteralListVariable(t *testing.T) {
+	if Extract(`for f in a b c; do head -20 "$f"; done`).Obfuscated {
+		t.Fatal("for-loop over a literal list must not be obfuscated when the body uses the loop var")
+	}
+	if Extract(`for d in src/a src/b; do echo "$d: x"; done`).Obfuscated {
+		t.Fatal("literal list with a var-using body must not be obfuscated")
+	}
+}
+
+// Binding the loop variable makes a dangerous loop MORE precise: the concrete
+// resolved target must surface so the floor can score it, instead of hiding
+// behind an unresolved `$f`.
+func TestForLoopBoundVarSurfacesConcreteTarget(t *testing.T) {
+	f := Extract(`for f in / /etc; do rm -rf "$f"; done`)
+	if !hasCmd(f, "rm") {
+		t.Fatalf("rm must surface, got %+v", f.Commands)
+	}
+	found := false
+	for _, c := range f.Commands {
+		if c.Name != "rm" {
+			continue
+		}
+		for _, a := range c.Args {
+			if a == "/" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("bound loop var must surface `rm -rf /` with concrete target, got %+v", f.Commands)
+	}
+}
+
+// When the list itself can't be resolved, the loop's values are unknown, so a
+// body reference to the loop var stays fail-closed (obfuscated).
+func TestForLoopUnresolvedListStaysObfuscated(t *testing.T) {
+	if !Extract(`for f in $UNKNOWN; do head "$f"; done`).Obfuscated {
+		t.Fatal("unresolved for-in list must stay obfuscated")
+	}
+	if !Extract(`for f in a $(evil) b; do head "$f"; done`).Obfuscated {
+		t.Fatal("a partially-unresolved list must stay obfuscated")
+	}
+}
+
 func TestArithmTestLetCmdSubstObfuscates(t *testing.T) {
 	for _, cmd := range []string{
 		"(( $(rm -rf /) ))",
