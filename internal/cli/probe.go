@@ -42,7 +42,7 @@ func Probe(name, home string) error {
 // --harness value. Absent flag ⇒ "" ⇒ claude-code (bare install) ⇒ PASS.
 // claude-specific: it reads the Claude settings.json wired by `argus init`.
 func checkConfiguredHarness(home string) error {
-	settings, err := claudeReadSettings(settingsPath(home))
+	settings, err := readHookSettingsJSON(settingsPath(home))
 	if err != nil {
 		return err
 	}

@@ -12,7 +12,7 @@ import (
 // checkCodexHook verifies ~/.codex/hooks.json has an entry that runs the argus
 // gate command, mirroring checkHook for Claude Code.
 func checkCodexHook(home string) error {
-	settings, err := claudeReadSettings(codexHooksPath(home))
+	settings, err := readHookSettingsJSON(codexHooksPath(home))
 	if err != nil {
 		return err
 	}

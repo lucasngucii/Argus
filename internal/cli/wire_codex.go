@@ -27,7 +27,7 @@ func wireCodexHook(home string) error {
 		return fmt.Errorf("init: create %s: %w", filepath.Dir(path), err)
 	}
 
-	settings, err := claudeReadSettings(path)
+	settings, err := readHookSettingsJSON(path)
 	if err != nil {
 		return err
 	}
@@ -49,7 +49,7 @@ func wireCodexHook(home string) error {
 			map[string]any{"type": "command", "command": codexGateWireCommand},
 		},
 	})
-	return claudeWriteSettings(path, settings)
+	return writeHookSettingsJSON(path, settings)
 }
 
 // codexHooksPath returns ~/.codex/hooks.json under home.

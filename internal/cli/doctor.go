@@ -12,12 +12,15 @@ import (
 	"github.com/lucasngucii/argus/internal/store"
 )
 
-// Doctor verifies an `argus init` install is intact: the Claude Code hook
-// is wired, policy.json loads and schema-validates, the SQLite store opens
-// (and so is writable — Open runs a CREATE TABLE IF NOT EXISTS against it),
-// and the policy_versions audit trail was seeded. It prints one PASS/FAIL
-// line per check to w and returns 0 only if every check passed, so it can
-// be used directly as a shell/CI exit-code gate.
+// Doctor verifies an `argus init` install is intact. It probes whichever
+// harness config directories are present (~/.claude, ~/.codex — both, if
+// both were wired) via Probe, prints a WARN when Codex's hook trust can't be
+// confirmed from disk and another naming the Codex matcher's Bash-only
+// coverage scope, and checks that policy.json loads and schema-validates,
+// the SQLite store opens (and so is writable — Open runs a CREATE TABLE IF
+// NOT EXISTS against it), and the policy_versions audit trail was seeded. It
+// prints one PASS/FAIL line per check to w and returns 0 only if every check
+// passed, so it can be used directly as a shell/CI exit-code gate.
 func Doctor(home string, w io.Writer) int {
 	ok := true
 
@@ -68,7 +71,7 @@ func dirExists(p string) bool {
 }
 
 func checkHook(home string) error {
-	settings, err := claudeReadSettings(settingsPath(home))
+	settings, err := readHookSettingsJSON(settingsPath(home))
 	if err != nil {
 		return err
 	}
@@ -89,7 +92,7 @@ func checkPolicy(home string) error {
 // matcher does not gate MCP tools (mcp__*) — an install from before MCP gating.
 // A re-run of `argus init` self-heals it. Does NOT change the exit code.
 func warnMissingMCPMatcher(home string, w io.Writer) {
-	settings, err := claudeReadSettings(settingsPath(home))
+	settings, err := readHookSettingsJSON(settingsPath(home))
 	if err != nil {
 		return
 	}
