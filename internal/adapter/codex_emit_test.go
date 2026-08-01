@@ -33,6 +33,14 @@ func TestCodexEmitDenyExits2AndNames(t *testing.T) {
 	if !strings.Contains(buf.String(), `"permissionDecision":"deny"`) {
 		t.Errorf("codex deny must serialize a deny body for the reason; got %q", buf.String())
 	}
+	// Both the wrapper key and hookEventName must be present, or a regression
+	// dropping the hookSpecificOutput wrapper would go uncaught.
+	if !strings.Contains(buf.String(), `"hookSpecificOutput"`) {
+		t.Errorf("codex deny must wrap the body in hookSpecificOutput; got %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), `"hookEventName":"PreToolUse"`) {
+		t.Errorf("codex deny must name hookEventName PreToolUse; got %q", buf.String())
+	}
 }
 
 func TestCodexEmitFailsClosedOnWriteError(t *testing.T) {

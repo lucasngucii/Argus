@@ -56,9 +56,9 @@ var codexFeaturesFlagFalseRe = regexp.MustCompile(`^(hooks|codex_hooks)\s*=\s*fa
 // hooks on the pinned Codex version, and this alias should be dropped from
 // codexFeaturesFlagRe if a future Codex release removes it.
 //
-// Multiline TOML strings (""" ... """ and ''' ... ''') are tracked via
-// inString: a line whose remainder contains an odd number of the triple
-// delimiter toggles the state, and every line while inString is skipped
+// Multiline TOML strings (three double quotes or three single quotes) are
+// tracked via inString: a line whose remainder contains an odd number of the
+// triple delimiter toggles the state, and every line while inString is skipped
 // entirely (no header/key parsing) — so a "[features]" or "hooks = true"
 // that only appears inside a string's body can neither open a fake table
 // nor set the flag, and inFeatures never leaks past a string that happens
@@ -117,11 +117,11 @@ func codexHooksFlagEnabled(home string) bool {
 }
 
 // oddTripleQuoteCount reports whether line contains an odd number of TOML
-// multiline-string delimiters (""" or '''), i.e. it opens or closes a
-// multiline string an odd number of times. A line that both opens and
-// closes the same string (e.g. a one-line `x = """abc"""`) nets even and so
-// does not toggle state, which is correct: it never leaves a multiline
-// string open.
+// multiline-string delimiters (three double quotes or three single quotes),
+// i.e. it opens or closes a multiline string an odd number of times. A line
+// that both opens and closes the same string (e.g. a one-line
+// `x = """abc"""`) nets even and so does not toggle state, which is
+// correct: it never leaves a multiline string open.
 func oddTripleQuoteCount(line string) bool {
 	return (strings.Count(line, `"""`)+strings.Count(line, `'''`))%2 == 1
 }

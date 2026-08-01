@@ -26,6 +26,23 @@ func TestRunInit_Help(t *testing.T) {
 	}
 }
 
+// TestRunInit_Codex pins RunInit's --harness=codex output: since Codex
+// requires two manual steps init cannot do itself, the printed notice must
+// name both — the config flag block and the /hooks trust step.
+func TestRunInit_Codex(t *testing.T) {
+	home := t.TempDir()
+	var w bytes.Buffer
+	if code := RunInit([]string{"--no-serve", "--harness=codex"}, home, &w); code != 0 {
+		t.Fatalf("RunInit(--harness=codex) = %d, want 0; out=%s", code, w.String())
+	}
+	out := w.String()
+	for _, want := range []string{"[features]", "hooks = true", "/hooks"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("codex init output missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
 // TestRunInit_NoServe runs setup but does not start a background server, so no
 // pid file or serve log appears.
 func TestRunInit_NoServe(t *testing.T) {

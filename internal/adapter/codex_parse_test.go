@@ -26,6 +26,25 @@ func TestCodexCanonical(t *testing.T) {
 	}
 }
 
+// TestCodexParseMCPShaped documents that an mcp__server__tool-shaped payload
+// still decodes fine through Parse("codex", ...) — codexParse delegates
+// straight to hook.Parse, which is tool_name-agnostic — even though the
+// Codex matcher itself is not wired to gate MCP tool calls today (Bash
+// only; see wire_codex.go's codexWiredMatcher). Parsing is not the gap.
+func TestCodexParseMCPShaped(t *testing.T) {
+	const payload = `{"session_id":"s1","turn_id":"u1","tool_name":"mcp__filesystem__read_file","tool_use_id":"t1","cwd":"/repo","permission_mode":"default","tool_input":{"path":"/etc/passwd"}}`
+	p, err := Parse("codex", strings.NewReader(payload))
+	if err != nil {
+		t.Fatalf("Parse(codex) err: %v", err)
+	}
+	if !p.IsMCP() {
+		t.Fatalf("mcp__ tool_name must parse as MCP; got %+v", p)
+	}
+	if p.MCPServer() != "filesystem" || p.MCPTool() != "read_file" {
+		t.Errorf("MCPServer/MCPTool = %q/%q, want filesystem/read_file", p.MCPServer(), p.MCPTool())
+	}
+}
+
 // TestCodexParseDoesNotFailOpenTheFloor proves codexParse feeds the classifier
 // a payload that still trips the rm-catastrophic floor: a Codex Bash payload
 // carrying "rm -rf /" must classify high and deny, exactly as it would from
