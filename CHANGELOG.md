@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.2.0
+## v0.1.12
 
 Adds Codex as a second supported harness alongside Claude Code.
 
