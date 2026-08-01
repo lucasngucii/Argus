@@ -49,20 +49,29 @@ var codexFeaturesFlagFalseRe = regexp.MustCompile(`^(hooks|codex_hooks)\s*=\s*fa
 // characters and wrongly accept "[[features]]" as the features table --
 // exactly the false-PASS this scan must never produce.
 //
-// A single known theoretical false-PASS residual remains (accepted as safe
-// enough per Task 7 brief, since it only widens acceptance, never narrows a
-// correctly-configured user's flag): the deprecated codex_hooks alias is
-// accepted forward-looking; Task 3.E must confirm codex_hooks still enables
-// hooks on the pinned Codex version, and this alias should be dropped from
-// codexFeaturesFlagRe if a future Codex release removes it.
+// Two known false-* residuals remain:
+//  1. [safe direction — a nag, never a false-PASS] A "#" comment line whose
+//     text happens to contain an odd count of a triple-quote delimiter (or a
+//     real string followed by such a trailing comment) is misread as
+//     opening/closing a multiline string, since this scanner does not strip
+//     comments before the delimiter check. This can only cause a real
+//     hooks = true to be wrongly skipped (fail-CLOSED), never accepted.
+//  2. [accepted forward-looking] The deprecated codex_hooks alias; Task 3.E
+//     must confirm codex_hooks still enables hooks on the pinned Codex
+//     version, and this alias should be dropped from codexFeaturesFlagRe if
+//     a future Codex release removes it.
 //
 // Multiline TOML strings (three double quotes or three single quotes) are
-// tracked via inString: a line whose remainder contains an odd number of the
-// triple delimiter toggles the state, and every line while inString is skipped
-// entirely (no header/key parsing) — so a "[features]" or "hooks = true"
-// that only appears inside a string's body can neither open a fake table
-// nor set the flag, and inFeatures never leaks past a string that happens
-// to contain a line that looks like a table header.
+// tracked via stringDelim, the delimiter that opened the current string
+// (three double quotes or three single quotes, empty when not in a
+// string). A line's remainder is skipped entirely (no header/key parsing)
+// while stringDelim is set. Tracking is delimiter-TYPE-aware: only an odd
+// count of the SAME delimiter that opened the string closes it — a stray
+// triple-single-quote substring inside a triple-double-quote-opened string
+// must not close it (and vice versa), or the string's
+// body would be misread as live TOML past a delimiter that never actually
+// terminated it. inFeatures never leaks past a string that happens to
+// contain a line that looks like a table header.
 //
 // Any read error, absent key, quoted/inline-table value, or a key found
 // outside [features] returns false.
@@ -75,19 +84,23 @@ func codexHooksFlagEnabled(home string) bool {
 
 	enabled := false
 	inFeatures := false
-	inString := false
+	stringDelim := "" // "" | `"""` | `'''`
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if inString {
-			if oddTripleQuoteCount(line) {
-				inString = false
+		if stringDelim != "" {
+			if oddDelimCount(line, stringDelim) {
+				stringDelim = ""
 			}
 			continue
 		}
-		if oddTripleQuoteCount(line) {
-			inString = true
+		if oddDelimCount(line, `"""`) {
+			stringDelim = `"""`
+			continue
+		}
+		if oddDelimCount(line, `'''`) {
+			stringDelim = `'''`
 			continue
 		}
 		if line == "" {
@@ -116,12 +129,13 @@ func codexHooksFlagEnabled(home string) bool {
 	return enabled
 }
 
-// oddTripleQuoteCount reports whether line contains an odd number of TOML
-// multiline-string delimiters (three double quotes or three single quotes),
-// i.e. it opens or closes a multiline string an odd number of times. A line
-// that both opens and closes the same string (e.g. a one-line
-// `x = """abc"""`) nets even and so does not toggle state, which is
-// correct: it never leaves a multiline string open.
-func oddTripleQuoteCount(line string) bool {
-	return (strings.Count(line, `"""`)+strings.Count(line, `'''`))%2 == 1
+// oddDelimCount reports whether line contains an odd number of the given
+// TOML multiline-string delimiter (three double quotes or three single
+// quotes), i.e. it opens or closes a string of that delimiter type an odd
+// number of times. A line that both
+// opens and closes the same string (e.g. a one-line `x = """abc"""`) nets
+// even and so does not toggle state, which is correct: it never leaves a
+// multiline string open.
+func oddDelimCount(line, delim string) bool {
+	return strings.Count(line, delim)%2 == 1
 }

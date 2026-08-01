@@ -74,6 +74,39 @@ func TestCodexProbeFailClosedOnStateLeakingPastClosedMultilineString(t *testing.
 	}
 }
 
+func TestCodexProbeFailClosedOnMismatchedDelimiterInsideString(t *testing.T) {
+	// A lone '''-style triple inside a """-opened string must NOT close the
+	// string: it's a different delimiter type. If it wrongly closed the
+	// string, the [features]/hooks=true lines that follow (still inside the
+	// unterminated """ body) would be misread as live TOML — a false-PASS in
+	// the dangerous direction (doctor blesses an unset flag).
+	body := "note = \"\"\"\n" +
+		"some text with a lone triple: '''\n" +
+		"[features]\n" +
+		"hooks = true\n" +
+		"\"\"\"\n"
+	home := t.TempDir()
+	_ = Wire("codex", home)
+	writeCodexConfig(t, home, body)
+	if Probe("codex", home) == nil {
+		t.Error("hooks=true after a mismatched-delimiter line inside an open string must not false-PASS")
+	}
+}
+
+func TestCodexProbePassesAfterSameLineOpenCloseString(t *testing.T) {
+	// A same-line open+close string (parity-even) must not leave inString
+	// stuck on: a real [features]/hooks=true AFTER it must still enable.
+	body := "x = \"\"\"foo\"\"\"\n" +
+		"[features]\n" +
+		"hooks = true\n"
+	home := t.TempDir()
+	_ = Wire("codex", home)
+	writeCodexConfig(t, home, body)
+	if err := Probe("codex", home); err != nil {
+		t.Errorf("real hooks=true after a same-line open+close string must PASS; got %v", err)
+	}
+}
+
 func TestCodexProbeFailClosedOnMisplacedFlag(t *testing.T) {
 	// key under a DIFFERENT table must NOT PASS (it doesn't enable hooks).
 	tests := []string{
