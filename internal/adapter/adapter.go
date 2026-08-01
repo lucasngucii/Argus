@@ -49,6 +49,11 @@ func Shape(name, verdict string) string {
 	switch name {
 	case "claude-code":
 		return verdict
+	case "codex":
+		if verdict == "allow" {
+			return "allow"
+		}
+		return "deny"
 	default:
 		// The safe floor for anything a harness may not honor is deny; only a
 		// plain "allow" passes through unchanged.
@@ -89,6 +94,8 @@ func Emit(name string, w io.Writer, o Outcome) int {
 	switch name {
 	case "claude-code":
 		return claudecodeEmit(w, o)
+	case "codex":
+		return codexEmit(w, o)
 	default:
 		return 2
 	}

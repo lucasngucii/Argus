@@ -144,7 +144,7 @@ func TestGateDefaultHarnessIsClaudeCode(t *testing.T) {
 }
 
 func TestGateUnknownHarnessFailsClosed(t *testing.T) {
-	out, code := gateOut(t, `{"tool_name":"Bash","tool_input":{"command":"ls"}}`, "codex")
+	out, code := gateOut(t, `{"tool_name":"Bash","tool_input":{"command":"ls"}}`, "bogus")
 	if code != 2 {
 		t.Errorf("unknown harness must exit 2 (fail-closed); got code=%d", code)
 	}
