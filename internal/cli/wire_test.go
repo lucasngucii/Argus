@@ -46,7 +46,7 @@ func TestWireIsIdempotent(t *testing.T) {
 }
 
 func TestWireUnknownHarnessErrors(t *testing.T) {
-	if err := Wire("codex", t.TempDir()); err == nil {
+	if err := Wire("bogus", t.TempDir()); err == nil {
 		t.Error("Wire(unknown harness) must error, got nil")
 	}
 }

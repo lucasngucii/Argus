@@ -15,6 +15,7 @@ func RunInit(argv []string, home string, w io.Writer) int {
 	fs.SetOutput(w)
 	noServe := fs.Bool("no-serve", false, "set up ~/.argus without starting the background server")
 	addr := fs.String("addr", "127.0.0.1:4600", "loopback address for the background server")
+	harness := fs.String("harness", "claude-code", "agent harness to wire (claude-code|codex)")
 	fs.Usage = func() { initUsage(w, fs) }
 
 	if err := fs.Parse(argv); err != nil {
@@ -24,11 +25,14 @@ func RunInit(argv []string, home string, w io.Writer) int {
 		return 2
 	}
 
-	if err := Init(home); err != nil {
+	if err := Init(home, *harness); err != nil {
 		fmt.Fprintf(w, "argus: init: %v\n", err)
 		return 1
 	}
 	fmt.Fprintln(w, "argus: initialized ~/.argus and wired the PreToolUse hook in ~/.claude/settings.json")
+	if *harness == "codex" {
+		fmt.Fprint(w, codexInitNotice)
+	}
 
 	if *noServe {
 		fmt.Fprintln(w, "argus: --no-serve set; start it later with `argus serve`")
@@ -41,6 +45,19 @@ func RunInit(argv []string, home string, w io.Writer) int {
 	}
 	return 0
 }
+
+// codexInitNotice is printed after a successful `argus init --harness=codex`.
+// Wire only writes ~/.codex/hooks.json; Codex additionally requires the user
+// to opt into hooks in config.toml and to trust the hook interactively —
+// neither of which Argus can do on the user's behalf.
+const codexInitNotice = `codex hook wired: ~/.codex/hooks.json
+Two manual steps Codex requires (Argus can't do these for you):
+  1. add to ~/.codex/config.toml:
+         [features]
+         hooks = true
+  2. trust the hook: run /hooks in a Codex session
+verify with: argus doctor
+`
 
 // initUsage documents what init does and its flags — the body of
 // `argus init --help`.

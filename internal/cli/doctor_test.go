@@ -10,7 +10,7 @@ import (
 
 func TestDoctor_MCPMatcherWarn(t *testing.T) {
 	home := t.TempDir()
-	if err := Init(home); err != nil {
+	if err := Init(home, "claude-code"); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
