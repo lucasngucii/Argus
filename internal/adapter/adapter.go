@@ -30,6 +30,8 @@ func Canonical(name string) (string, error) {
 	switch name {
 	case "", "claude-code":
 		return "claude-code", nil
+	case "codex":
+		return "codex", nil
 	default:
 		return "", fmt.Errorf("unknown harness %q", name)
 	}
@@ -61,7 +63,7 @@ func Shape(name, verdict string) string {
 // adapter cannot opt out of the more-restrictive-only assertion. Keep it in
 // sync with Canonical. A future adapter also adds Canonical/Parse/Emit/Shape
 // cases here and cli.Wire/Probe cases.
-func registeredHarnesses() []string { return []string{"claude-code"} }
+func registeredHarnesses() []string { return []string{"claude-code", "codex"} }
 
 // Parse turns a harness's raw PreToolUse payload into the normalized
 // hook.Payload the classifier consumes. Unknown name → fail-closed error.
@@ -69,6 +71,8 @@ func Parse(name string, r io.Reader) (hook.Payload, error) {
 	switch name {
 	case "claude-code":
 		return claudecodeParse(r)
+	case "codex":
+		return codexParse(r)
 	default:
 		return hook.Payload{}, fmt.Errorf("parse: unknown harness %q", name)
 	}

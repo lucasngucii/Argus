@@ -10,9 +10,10 @@ func TestCanonical(t *testing.T) {
 	}{
 		{"", "claude-code", false}, // bare `argus gate`, old install
 		{"claude-code", "claude-code", false},
-		{"codex", "", true},       // not yet a known harness
+		{"codex", "codex", false},
 		{"CLAUDE-CODE", "", true}, // case-sensitive; unknown
 		{"claude", "", true},
+		{"bogus", "", true}, // permanent-unknown fixture
 	}
 	for _, tt := range tests {
 		got, err := Canonical(tt.in)
