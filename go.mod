@@ -3,6 +3,7 @@ module github.com/lucasngucii/argus
 go 1.26
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	modernc.org/sqlite v1.54.0
 	mvdan.cc/sh/v3 v3.13.1

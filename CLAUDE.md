@@ -4,7 +4,7 @@ Binding rules for this codebase. **Violating the letter violates the spirit.** W
 
 ## Stack & build
 - Go **1.26**. **`CGO_ENABLED=0` always** — pure-Go deps only (this is why `modernc.org/sqlite`, not `mattn/go-sqlite3`).
-- Dependencies are a liability. Pre-approved: `mvdan.cc/sh/v3`, `modernc.org/sqlite`, `santhosh-tekuri/jsonschema/v6`. Any new dep needs a one-line justification and a "why not stdlib" answer.
+- Dependencies are a liability. Pre-approved: `mvdan.cc/sh/v3`, `modernc.org/sqlite`, `santhosh-tekuri/jsonschema/v6`, `github.com/BurntSushi/toml` (correctly reading a boolean from a user's TOML config requires a TOML parser; a hand-rolled scanner produced repeated false-PASS bugs; stdlib has no TOML; pure-Go keeps CGO_ENABLED=0). Any new dep needs a one-line justification and a "why not stdlib" answer.
 - **stdlib first:** `log/slog` (logs), `flag` (args), `net/http`+SSE (serve), `encoding/json`, `//go:embed` (assets). No web / DI / config framework.
 
 ## Architecture invariants — never break these

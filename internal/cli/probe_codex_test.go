@@ -107,6 +107,40 @@ func TestCodexProbePassesAfterSameLineOpenCloseString(t *testing.T) {
 	}
 }
 
+// TestCodexProbeFailClosedOnFlagInsideLiteralStringWithOddQuoteCounts is the
+// exact false-PASS repro that motivated replacing the hand-rolled line
+// scanner with a real TOML parser: a triple-single-quoted literal string
+// body whose lines each contain an odd count of double-quote triples (which
+// a naive per-delimiter-type parity tracker could still mishandle) must
+// decode as ONE string value, not as a table header and key — the
+// [features]/hooks=true lines are string content, so hooks must read as NOT
+// enabled.
+func TestCodexProbeFailClosedOnFlagInsideLiteralStringWithOddQuoteCounts(t *testing.T) {
+	body := "note = ''' abc \"\"\" hooks = true\n" +
+		"more text with an odd \"\"\" inside\n" +
+		"[features]\n" +
+		"hooks = true\n" +
+		"'''\n"
+	home := t.TempDir()
+	_ = Wire("codex", home)
+	writeCodexConfig(t, home, body)
+	if Probe("codex", home) == nil {
+		t.Error("hooks=true inside a ''' literal string body must not false-PASS")
+	}
+}
+
+// TestCodexProbeFailClosedOnQuotedValue documents that a quoted (string)
+// value never enables hooks, even though it reads as "true": only the TOML
+// boolean literal counts.
+func TestCodexProbeFailClosedOnQuotedValue(t *testing.T) {
+	home := t.TempDir()
+	_ = Wire("codex", home)
+	writeCodexConfig(t, home, "[features]\nhooks = \"true\"\n")
+	if Probe("codex", home) == nil {
+		t.Error(`a quoted hooks = "true" must not enable hooks (not a TOML boolean)`)
+	}
+}
+
 func TestCodexProbeFailClosedOnMisplacedFlag(t *testing.T) {
 	// key under a DIFFERENT table must NOT PASS (it doesn't enable hooks).
 	tests := []string{
