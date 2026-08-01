@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/lucasngucii/argus/internal/adapter"
 	"github.com/lucasngucii/argus/internal/policy"
 	"github.com/lucasngucii/argus/internal/store"
 )
@@ -26,6 +27,14 @@ import (
 //   - the legacy decisions.jsonl import runs at most once (see
 //     importLegacyDecisions).
 func Init(home, harness string) error {
+	// Validate the harness BEFORE any disk write: Wire would catch this too,
+	// but it runs last, after policy.json/argus.db are already seeded — so a
+	// typo'd --harness would otherwise leave a half-seeded ~/.argus behind on
+	// every failed run.
+	if _, err := adapter.Canonical(harness); err != nil {
+		return fmt.Errorf("init: %w", err)
+	}
+
 	argusDir := filepath.Join(home, ".argus")
 	if err := os.MkdirAll(argusDir, 0o700); err != nil {
 		return fmt.Errorf("init: create %s: %w", argusDir, err)

@@ -287,6 +287,21 @@ func countGateEntries(t *testing.T, home string) int {
 // asSlice converts v to []any if it is one, else returns an empty slice.
 func asSlice(v any) []any { s, _ := v.([]any); return s }
 
+// TestInitRejectsUnknownHarnessWithoutWritingAnything pins Init's atomicity
+// contract: an invalid --harness must error BEFORE any disk write, not after
+// ~/.argus has already been half-seeded by policy/DB setup. Init used to
+// validate the harness only inside Wire, called last — so a typo left a
+// stray ~/.argus around on every failed run.
+func TestInitRejectsUnknownHarnessWithoutWritingAnything(t *testing.T) {
+	home := t.TempDir()
+	if err := Init(home, "typo"); err == nil {
+		t.Fatal("Init with an unknown harness must error")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".argus")); !os.IsNotExist(err) {
+		t.Fatalf("Init with an unknown harness must write NOTHING; ~/.argus exists (err=%v)", err)
+	}
+}
+
 func TestSeedPolicyWritesThinDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "policy.json")
