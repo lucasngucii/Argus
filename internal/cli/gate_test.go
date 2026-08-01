@@ -190,6 +190,67 @@ func TestGateRecoverEmitsDeny(t *testing.T) {
 	}
 }
 
+// TestGateCodexAllowsBenign drives the FULL Gate pipeline (parse -> classify
+// -> Shape -> Emit) for Codex on a safe command, mirroring
+// TestGateAllowsBenign for Claude Code. Codex's allow body is the literal
+// empty object, not Claude's hookSpecificOutput allow shape.
+func TestGateCodexAllowsBenign(t *testing.T) {
+	out, code := gateOut(t, `{"tool_name":"Bash","tool_input":{"command":"ls"}}`, "codex")
+	if code != 0 {
+		t.Errorf("codex allow must exit 0; got %d", code)
+	}
+	if got := strings.TrimSpace(out); got != "{}" {
+		t.Errorf("codex allow must emit {}; got %q", got)
+	}
+}
+
+// TestGateCodexHighSeverityDenies mirrors TestGateHighSeverityDenies for
+// Codex: the high floor must hold end-to-end through Shape and codexEmit,
+// exiting 2 with a deny body.
+func TestGateCodexHighSeverityDenies(t *testing.T) {
+	out, code := gateOut(t, `{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}`, "codex")
+	if code != 2 {
+		t.Errorf("codex high severity must exit 2; got %d", code)
+	}
+	if !strings.Contains(out, `"permissionDecision":"deny"`) {
+		t.Errorf("codex high severity must emit a deny body; got %q", out)
+	}
+}
+
+// TestGateCodexAskCollapsesToDenyEndToEnd proves adapter.Shape's ask->deny
+// collapse survives the FULL Gate pipeline, not just the isolated Shape()
+// unit test: "sudo ls" in the interactive "default" permission mode maps to
+// "ask" for Claude Code (per verdict.Map), but Codex has no ask semantics, so
+// the same payload must deny on Codex.
+func TestGateCodexAskCollapsesToDenyEndToEnd(t *testing.T) {
+	payload := `{"tool_name":"Bash","permission_mode":"default","tool_input":{"command":"sudo ls"}}`
+
+	claudeOut, _ := gateOut(t, payload, "claude-code")
+	if !strings.Contains(claudeOut, `"permissionDecision":"ask"`) {
+		t.Fatalf("sanity check failed: claude-code must map this payload to ask; got %q", claudeOut)
+	}
+
+	codexOut, code := gateOut(t, payload, "codex")
+	if code != 2 {
+		t.Errorf("codex must deny (collapsed from ask); exit code = %d", code)
+	}
+	if !strings.Contains(codexOut, `"permissionDecision":"deny"`) {
+		t.Errorf("codex must emit a deny body for the ask-collapsed verdict; got %q", codexOut)
+	}
+}
+
+// TestGateCodexWriteFailureFailsClosed mirrors TestGateWriteFailureFailsClosed
+// for Codex: a stdout write failure on the terminal emit path must fail
+// closed via exit 2, never a dropped 0.
+func TestGateCodexWriteFailureFailsClosed(t *testing.T) {
+	home := t.TempDir()
+	code := Gate(strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"ls"}}`),
+		gateFailWriter{}, home, "codex")
+	if code != 2 {
+		t.Errorf("codex stdout write failure must exit 2; got %d", code)
+	}
+}
+
 // Backward-compat regression: a bare install (harness "") must record the row
 // as "claude-code", or replay/close-loop's claudeCodeOnly filter drops it.
 // Uses a NON-safe command because Gate only records non-safe decisions.
