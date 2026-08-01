@@ -29,13 +29,35 @@ jobs:
             dist/argus-*.tar.gz
             dist/checksums.txt
       - name: Publish platform packages
+        # Fail-closed: any publish that ultimately fails aborts the job, so a
+        # partial matrix never ships with the main package on top of it. Each
+        # publish retries to ride out a transient registry/network error.
         run: |
+          set -euo pipefail
+          publish() {
+            for attempt in 1 2 3; do
+              if npm publish "$1" --access public --provenance; then return 0; fi
+              echo "publish $1 failed (attempt $attempt/3), retrying in 15s..." >&2
+              sleep 15
+            done
+            echo "publish $1 failed after 3 attempts" >&2
+            return 1
+          }
           for s in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
-            npm publish "./npm/argus-$s" --access public --provenance
+            publish "./npm/argus-$s"
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish main package
-        run: npm publish ./npm/argus --access public --provenance
+        # Published last, after every platform package it depends on exists.
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if npm publish ./npm/argus --access public --provenance; then exit 0; fi
+            echo "publish main failed (attempt $attempt/3), retrying in 15s..." >&2
+            sleep 15
+          done
+          echo "publish main failed after 3 attempts" >&2
+          exit 1
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
