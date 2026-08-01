@@ -25,6 +25,14 @@ func Probe(name, home string) error {
 			return err
 		}
 		return checkConfiguredHarness(home)
+	case "codex":
+		if err := checkCodexHook(home); err != nil {
+			return err
+		}
+		if !codexHooksFlagEnabled(home) {
+			return fmt.Errorf("codex [features].hooks (or the deprecated codex_hooks alias) is not confirmed enabled in ~/.codex/config.toml")
+		}
+		return nil
 	default:
 		return fmt.Errorf("no probe for harness %q", canon)
 	}

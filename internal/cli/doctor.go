@@ -30,7 +30,21 @@ func Doctor(home string, w io.Writer) int {
 		fmt.Fprintf(w, "PASS %s\n", label)
 	}
 
-	report("hook: PreToolUse -> argus gate wired in ~/.claude/settings.json", Probe("claude-code", home))
+	claudeInstalled := dirExists(filepath.Join(home, ".claude"))
+	codexInstalled := dirExists(filepath.Join(home, ".codex"))
+	if claudeInstalled {
+		report("hook (claude-code): argus gate wired in ~/.claude/settings.json", Probe("claude-code", home))
+	}
+	if codexInstalled {
+		report("hook (codex): argus gate wired + [features].hooks enabled", Probe("codex", home))
+		// Trust is not disk-verifiable — surface it as a WARN so a PASS above is
+		// never read as "definitely active" when the hook may be untrusted-inert.
+		fmt.Fprintln(w, "WARN hook (codex): the hook must be trusted (run /hooks in Codex) — Argus can't verify trust from disk")
+	}
+	if !claudeInstalled && !codexInstalled {
+		// fresh box: no harness detected yet, still surface an actionable FAIL
+		report("hook: PreToolUse -> argus gate wired in ~/.claude/settings.json", Probe("claude-code", home))
+	}
 	report("policy: policy.json loads and schema-validates", checkPolicy(home))
 	warnMissingMCPMatcher(home, w)
 	warnUnknownOverride(home, w)
@@ -45,6 +59,12 @@ func Doctor(home string, w io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// dirExists reports whether p exists and is a directory.
+func dirExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
 }
 
 func checkHook(home string) error {
