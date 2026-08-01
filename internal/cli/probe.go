@@ -25,6 +25,14 @@ func Probe(name, home string) error {
 			return err
 		}
 		return checkConfiguredHarness(home)
+	case "codex":
+		if err := checkCodexHook(home); err != nil {
+			return err
+		}
+		if !codexHooksFlagEnabled(home) {
+			return fmt.Errorf("codex [features].hooks (or the deprecated codex_hooks alias) is not confirmed enabled in ~/.codex/config.toml")
+		}
+		return nil
 	default:
 		return fmt.Errorf("no probe for harness %q", canon)
 	}
@@ -32,8 +40,9 @@ func Probe(name, home string) error {
 
 // checkConfiguredHarness reads the wired command and rejects an unknown
 // --harness value. Absent flag ⇒ "" ⇒ claude-code (bare install) ⇒ PASS.
+// claude-specific: it reads the Claude settings.json wired by `argus init`.
 func checkConfiguredHarness(home string) error {
-	settings, err := readSettings(settingsPath(home))
+	settings, err := readHookSettingsJSON(settingsPath(home))
 	if err != nil {
 		return err
 	}

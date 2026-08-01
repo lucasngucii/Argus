@@ -1,5 +1,47 @@
 # Changelog
 
+## v0.1.12
+
+Adds Codex as a second supported harness alongside Claude Code.
+
+### Added
+
+- **`argus init --harness=codex`** wires the PreToolUse hook for Codex.
+  Codex requires two additional manual steps Argus cannot perform on your
+  behalf: enabling the hooks feature flag in your Codex config, and trusting
+  the hook interactively (`/hooks` in a Codex session). `init` prints both
+  steps; `argus doctor` FAILs if the flag isn't on and WARNs that trust
+  can't be confirmed from disk (an untrusted hook is silently inert — there's
+  no on-disk signal to check).
+- **`argus doctor` now probes every installed harness**, not just one: it
+  checks Claude Code when a Claude Code install is present and Codex when a
+  Codex install is present, reporting a PASS/FAIL/WARN line per harness.
+- **`internal/adapter.Shape`**: a seam that translates an Argus verdict into
+  the strongest verdict a given harness can actually honor, and is
+  constrained to only ever translate *more* restrictive, never looser.
+  Codex's hook contract is deny-only (no interactive ask), so `Shape`
+  collapses an Argus `ask` to `deny` on Codex rather than risk it being
+  ignored as an implicit allow.
+
+### Codex coverage — read before relying on this
+
+Codex's PreToolUse hook CAN fire for four tool classes: `shell` (Bash),
+`unified_exec`, `apply_patch` (Codex ≥ 0.123), and MCP tool calls — but
+Argus's Codex matcher in this release wires only `tool_name == "Bash"`. **Only
+Bash commands are gated on Codex today**, on the full severity ladder, so a
+Bash-mediated read (`cat ~/.ssh/id_rsa`) is still caught. **MCP tool calls,
+`apply_patch`, and `unified_exec` are not yet wired and run completely
+ungated on Codex** — this is a known gap, tracked for a follow-up that widens
+the matcher once the exact `tool_name` each of those reports is confirmed
+against a live `codex` CLI (see the verification note's PENDING items). Do
+not treat MCP as gated on Codex, and do not read this as parity with Claude
+Code's matcher (`Bash`/`Write`/`Edit`/`mcp__*`).
+
+This adapter was verified against Codex's public documentation and issue
+tracker, not yet against a live `codex` CLI — confirm the flag name, default
+state, and trust behavior against your installed Codex version before
+relying on it.
+
 ## v0.1.11
 
 Re-release of v0.1.10 — that version published incompletely (the two macOS

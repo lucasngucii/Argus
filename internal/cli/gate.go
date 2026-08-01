@@ -63,6 +63,11 @@ func decide(stdin io.Reader, home, name string) adapter.Outcome {
 
 	decision := classify.Classify(payload, pol)
 	mapped := verdict.Map(decision.Severity, payload.PermissionMode)
+	// Collapse the verdict to what THIS harness can actually honor (a deny-only
+	// harness turns "ask" into "deny"). Applied before record + emit so the
+	// stored row reflects the verdict the harness enforced. Correctness of a
+	// deny-only harness rides on this line — see adapter.Shape.
+	mapped = adapter.Shape(name, mapped)
 
 	if decision.Severity != "safe" {
 		recordDecision(home, payload, pol, decision, mapped, name)

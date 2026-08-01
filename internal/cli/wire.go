@@ -18,6 +18,8 @@ func Wire(name, home string) error {
 	switch canon {
 	case "claude-code":
 		return wireHook(home)
+	case "codex":
+		return wireCodexHook(home)
 	default:
 		return fmt.Errorf("wire: no wiring for harness %q", canon)
 	}

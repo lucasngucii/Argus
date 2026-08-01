@@ -18,7 +18,7 @@ func TestParseDispatch(t *testing.T) {
 		t.Errorf("Parse(claude-code) got %+v", p)
 	}
 
-	if _, err := Parse("codex", strings.NewReader(payload)); err == nil {
+	if _, err := Parse("bogus", strings.NewReader(payload)); err == nil {
 		t.Error("Parse(unknown harness) must error, got nil")
 	}
 }

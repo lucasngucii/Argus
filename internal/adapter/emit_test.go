@@ -39,7 +39,7 @@ func TestEmitFailsClosedOnWriteError(t *testing.T) {
 
 func TestEmitUnknownHarnessFailsClosedNoWrite(t *testing.T) {
 	var buf bytes.Buffer
-	code := Emit("codex", &buf, Outcome{Verdict: "deny", Reason: "x"})
+	code := Emit("bogus", &buf, Outcome{Verdict: "deny", Reason: "x"})
 	if code != 2 {
 		t.Errorf("Emit(unknown) code=%d, want 2", code)
 	}

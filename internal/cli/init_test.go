@@ -69,7 +69,7 @@ func TestInitCreatesPolicyDBAndPreservesExistingHook(t *testing.T) {
 	home := t.TempDir()
 	seedSettingsWithUnrelatedHook(t, home)
 
-	if err := Init(home); err != nil {
+	if err := Init(home, "claude-code"); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 
@@ -106,10 +106,10 @@ func TestInitTwiceDoesNotDuplicateHook(t *testing.T) {
 	home := t.TempDir()
 	seedSettingsWithUnrelatedHook(t, home)
 
-	if err := Init(home); err != nil {
+	if err := Init(home, "claude-code"); err != nil {
 		t.Fatalf("first Init: %v", err)
 	}
-	if err := Init(home); err != nil {
+	if err := Init(home, "claude-code"); err != nil {
 		t.Fatalf("second Init: %v", err)
 	}
 
@@ -121,7 +121,7 @@ func TestInitTwiceDoesNotDuplicateHook(t *testing.T) {
 
 func TestDoctorAfterInit(t *testing.T) {
 	home := t.TempDir()
-	if err := Init(home); err != nil {
+	if err := Init(home, "claude-code"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -133,7 +133,7 @@ func TestDoctorAfterInit(t *testing.T) {
 
 func TestDoctorFailsWhenHookRemoved(t *testing.T) {
 	home := t.TempDir()
-	if err := Init(home); err != nil {
+	if err := Init(home, "claude-code"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -161,7 +161,7 @@ func TestInitImportsLegacyDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Init(home); err != nil {
+	if err := Init(home, "claude-code"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -186,7 +186,7 @@ func TestInitImportsLegacyDecisions(t *testing.T) {
 
 func TestInitWiresMCPMatcher(t *testing.T) {
 	home := t.TempDir()
-	if err := Init(home); err != nil {
+	if err := Init(home, "claude-code"); err != nil {
 		t.Fatal(err)
 	}
 	m := readGateMatcher(t, home)
@@ -197,11 +197,11 @@ func TestInitWiresMCPMatcher(t *testing.T) {
 
 func TestInitHealsStaleMatcher(t *testing.T) {
 	home := t.TempDir()
-	if err := Init(home); err != nil {
+	if err := Init(home, "claude-code"); err != nil {
 		t.Fatal(err)
 	}
-	setGateMatcher(t, home, "Bash|Write|Edit") // simulate an old install
-	if err := Init(home); err != nil {           // re-init must heal
+	setGateMatcher(t, home, "Bash|Write|Edit")        // simulate an old install
+	if err := Init(home, "claude-code"); err != nil { // re-init must heal
 		t.Fatal(err)
 	}
 	m := readGateMatcher(t, home)
@@ -286,6 +286,21 @@ func countGateEntries(t *testing.T, home string) int {
 
 // asSlice converts v to []any if it is one, else returns an empty slice.
 func asSlice(v any) []any { s, _ := v.([]any); return s }
+
+// TestInitRejectsUnknownHarnessWithoutWritingAnything pins Init's atomicity
+// contract: an invalid --harness must error BEFORE any disk write, not after
+// ~/.argus has already been half-seeded by policy/DB setup. Init used to
+// validate the harness only inside Wire, called last — so a typo left a
+// stray ~/.argus around on every failed run.
+func TestInitRejectsUnknownHarnessWithoutWritingAnything(t *testing.T) {
+	home := t.TempDir()
+	if err := Init(home, "typo"); err == nil {
+		t.Fatal("Init with an unknown harness must error")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".argus")); !os.IsNotExist(err) {
+		t.Fatalf("Init with an unknown harness must write NOTHING; ~/.argus exists (err=%v)", err)
+	}
+}
 
 func TestSeedPolicyWritesThinDefault(t *testing.T) {
 	dir := t.TempDir()

@@ -8,13 +8,15 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/lucasngucii/argus/internal/adapter"
 	"github.com/lucasngucii/argus/internal/policy"
 	"github.com/lucasngucii/argus/internal/store"
 )
 
-// Init sets up ~/.argus (seed policy + SQLite store) and wires the Claude
-// Code PreToolUse hook that runs `argus gate`, without disturbing anything
-// already in ~/.claude/settings.json. It is safe to run more than once:
+// Init sets up ~/.argus (seed policy + SQLite store) and wires the named
+// harness's PreToolUse hook that runs `argus gate`, without disturbing
+// anything already in its config file (see Wire). It is safe to run more
+// than once:
 //   - policy.json is left alone if it already exists — Init seeds a
 //     starting policy, it never overwrites one a user may have since edited.
 //   - the version-1 policy_versions row is only inserted the first time
@@ -24,7 +26,15 @@ import (
 //     references `argus gate` (see wireHook).
 //   - the legacy decisions.jsonl import runs at most once (see
 //     importLegacyDecisions).
-func Init(home string) error {
+func Init(home, harness string) error {
+	// Validate the harness BEFORE any disk write: Wire would catch this too,
+	// but it runs last, after policy.json/argus.db are already seeded — so a
+	// typo'd --harness would otherwise leave a half-seeded ~/.argus behind on
+	// every failed run.
+	if _, err := adapter.Canonical(harness); err != nil {
+		return fmt.Errorf("init: %w", err)
+	}
+
 	argusDir := filepath.Join(home, ".argus")
 	if err := os.MkdirAll(argusDir, 0o700); err != nil {
 		return fmt.Errorf("init: create %s: %w", argusDir, err)
@@ -40,7 +50,7 @@ func Init(home string) error {
 		return err
 	}
 
-	if err := Wire("claude-code", home); err != nil {
+	if err := Wire(harness, home); err != nil {
 		return err
 	}
 

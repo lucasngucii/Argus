@@ -19,6 +19,53 @@ argus doctor    # confirm it's healthy
 Prebuilt for macOS & Linux (arm64/x64); anywhere else:
 `go install github.com/lucasngucii/argus/cmd/argus@latest`.
 
+### Codex
+
+```bash
+argus init --harness=codex   # wires the PreToolUse hook (idempotent)
+```
+
+`init` can't finish activating the hook for you — Codex requires two manual
+steps by design:
+
+1. Add to the **user-level** `~/.codex/config.toml` (a repo-local
+   `.codex/config.toml` is not confirmed to reliably enable hooks, and may
+   silently fail):
+   ```toml
+   [features]
+   hooks = true
+   ```
+2. Trust the hook: run `/hooks` in a Codex session.
+
+`argus doctor` FAILs if the flag isn't on, and prints a WARN that trust can't
+be confirmed from disk — it can only remind you to have run `/hooks`.
+Flag-on plus trusted is what we've confirmed is required; it may not be the
+complete list. In particular, whether Argus's `~/.codex/hooks.json` entry
+takes precedence over — or is shadowed by — an inline `[hooks]` block in
+`config.toml` is not yet confirmed against a live Codex install; don't treat
+"flag + trust" as an exhaustive activation checklist.
+
+**Codex coverage — today, Bash only.** Codex's PreToolUse hook is *capable*
+of firing for four tool classes: `shell` (Bash), `unified_exec`, `apply_patch`
+(Codex ≥ 0.123), and MCP tool calls. Argus's Codex matcher currently wires
+only `tool_name == "Bash"`, so **only Bash commands are gated on Codex
+today** — on the full severity ladder, so a Bash-mediated read
+(`cat ~/.ssh/id_rsa`) is still caught. **MCP tool calls, `apply_patch`, and
+`unified_exec` are not yet wired for Codex and run ungated** — this is a
+known gap, not a design choice; closing it needs the matcher widened and a
+live capture of the exact `tool_name` each of those reports (see the
+verification note's PENDING items). Do not treat MCP as gated on Codex, and
+do not assume parity with Claude Code, whose matcher covers
+`Bash`/`Write`/`Edit`/`mcp__*`. Codex's hook contract is deny-only, so an
+Argus `ask` verdict collapses to `deny` on Codex rather than prompting.
+Argus is inert on Codex until at least both the config flag above is set and
+the hook is trusted (see the hedge above: that may not be the complete
+activation checklist).
+
+This adapter is verified against Codex's public documentation, not yet
+against a live `codex` CLI — confirm the details above against your
+installed version.
+
 ### Verifying your install
 
 Argus sits in front of every command your agent runs — so verify the binary
@@ -86,8 +133,8 @@ rule: git-danger      severity: medium   verdict: ask
 
 | Command | What it does |
 |---|---|
-| `argus init` | Set up `~/.argus/` and wire the hook. |
-| `argus doctor` | Verify the install; warns if the policy dropped baseline coverage. |
+| `argus init` | Set up `~/.argus/` and wire the hook. Claude Code by default; `--harness=codex` wires Codex. |
+| `argus doctor` | Verify the install; warns if the policy dropped baseline coverage. Probes every installed harness. |
 | `argus explain <cmd>` | Dry-run one command: severity, firing rule, verdict, parsed facts. |
 | `argus stats [--jsonl]` | Decision digest / JSONL export. |
 | `argus serve` | Local web UI (loopback-only): live tail, stats, explain, policy editor, replay. |

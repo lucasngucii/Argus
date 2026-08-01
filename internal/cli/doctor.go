@@ -12,12 +12,15 @@ import (
 	"github.com/lucasngucii/argus/internal/store"
 )
 
-// Doctor verifies an `argus init` install is intact: the Claude Code hook
-// is wired, policy.json loads and schema-validates, the SQLite store opens
-// (and so is writable — Open runs a CREATE TABLE IF NOT EXISTS against it),
-// and the policy_versions audit trail was seeded. It prints one PASS/FAIL
-// line per check to w and returns 0 only if every check passed, so it can
-// be used directly as a shell/CI exit-code gate.
+// Doctor verifies an `argus init` install is intact. It probes whichever
+// harness config directories are present (~/.claude, ~/.codex — both, if
+// both were wired) via Probe, prints a WARN when Codex's hook trust can't be
+// confirmed from disk and another naming the Codex matcher's Bash-only
+// coverage scope, and checks that policy.json loads and schema-validates,
+// the SQLite store opens (and so is writable — Open runs a CREATE TABLE IF
+// NOT EXISTS against it), and the policy_versions audit trail was seeded. It
+// prints one PASS/FAIL line per check to w and returns 0 only if every check
+// passed, so it can be used directly as a shell/CI exit-code gate.
 func Doctor(home string, w io.Writer) int {
 	ok := true
 
@@ -30,7 +33,24 @@ func Doctor(home string, w io.Writer) int {
 		fmt.Fprintf(w, "PASS %s\n", label)
 	}
 
-	report("hook: PreToolUse -> argus gate wired in ~/.claude/settings.json", Probe("claude-code", home))
+	claudeInstalled := dirExists(filepath.Join(home, ".claude"))
+	codexInstalled := dirExists(filepath.Join(home, ".codex"))
+	if claudeInstalled {
+		report("hook (claude-code): argus gate wired in ~/.claude/settings.json", Probe("claude-code", home))
+	}
+	if codexInstalled {
+		report("hook (codex): argus gate wired + [features].hooks enabled", Probe("codex", home))
+		// Trust is not disk-verifiable — surface it as a WARN so a PASS above is
+		// never read as "definitely active" when the hook may be untrusted-inert.
+		fmt.Fprintln(w, "WARN hook (codex): the hook must be trusted (run /hooks in Codex) — Argus can't verify trust from disk")
+		// The Codex matcher is Bash-only today — surface the coverage gap so a
+		// PASS above is never read as "everything Codex can gate is gated".
+		fmt.Fprintln(w, "WARN hook (codex): only Bash commands are gated on Codex; MCP / apply_patch / unified_exec tool calls are NOT yet gated")
+	}
+	if !claudeInstalled && !codexInstalled {
+		// fresh box: no harness detected yet, still surface an actionable FAIL
+		report("hook: PreToolUse -> argus gate wired in ~/.claude/settings.json", Probe("claude-code", home))
+	}
 	report("policy: policy.json loads and schema-validates", checkPolicy(home))
 	warnMissingMCPMatcher(home, w)
 	warnUnknownOverride(home, w)
@@ -47,8 +67,14 @@ func Doctor(home string, w io.Writer) int {
 	return 0
 }
 
+// dirExists reports whether p exists and is a directory.
+func dirExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
+}
+
 func checkHook(home string) error {
-	settings, err := readSettings(settingsPath(home))
+	settings, err := readHookSettingsJSON(settingsPath(home))
 	if err != nil {
 		return err
 	}
@@ -69,7 +95,7 @@ func checkPolicy(home string) error {
 // matcher does not gate MCP tools (mcp__*) — an install from before MCP gating.
 // A re-run of `argus init` self-heals it. Does NOT change the exit code.
 func warnMissingMCPMatcher(home string, w io.Writer) {
-	settings, err := readSettings(settingsPath(home))
+	settings, err := readHookSettingsJSON(settingsPath(home))
 	if err != nil {
 		return
 	}

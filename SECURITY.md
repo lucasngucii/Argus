@@ -47,6 +47,36 @@ agent harness's own permissions, or good judgment.
   credential paths (`~/.ssh`, `~/.aws`, `~/.argus`, `~/.claude`) from writes,
   deletes, and content reads.
 
+### Codex coverage
+
+The threat model above is the same classification layer, not a sandbox, on
+Codex — but the surface it can see is narrower than Claude Code's, and
+narrower than what Codex's hook is even capable of. Codex's PreToolUse hook
+CAN fire for four tool classes: `shell` (Bash), `unified_exec`, `apply_patch`
+(Codex ≥ 0.123), and MCP tool calls — but Argus's Codex matcher today wires
+only `tool_name == "Bash"`. **Only Bash commands are gated on Codex right
+now**, on the full severity ladder: a Bash-mediated read
+(`cat ~/.ssh/id_rsa`) is still caught. **MCP tool calls, `apply_patch`, and
+`unified_exec` are NOT yet wired for Codex and run completely ungated** — do
+not treat MCP as protected on Codex. This is a known gap tracked for a
+follow-up (widening the matcher requires a live capture of the exact
+`tool_name` each of those tool classes reports; see the verification note's
+PENDING items), not a design decision, and it means Codex support today is
+not at parity with Claude Code's matcher (`Bash`/`Write`/`Edit`/`mcp__*`).
+Codex's hook contract is deny-only: an Argus `ask` verdict collapses to
+`deny` on Codex rather than prompting, since Codex has no interactive-ask
+semantics and downgrading to `allow` would fail open. Argus is completely
+inert on Codex until you at least enable the hooks feature flag and trust the
+hook — `argus doctor` FAILs on the former and WARNs on both that and on the
+matcher's Bash-only scope, since trust state isn't verifiable from disk.
+"Flag enabled and trusted" is what we've confirmed is necessary, but it is
+not confirmed to be the *complete* activation checklist: whether Argus's
+`~/.codex/hooks.json` entry takes precedence over, or is shadowed by, an
+inline `[hooks]` block in `config.toml` is unconfirmed against a live Codex
+install — don't treat flag+trust as exhaustive. This adapter is verified
+against Codex's public documentation, not yet against a live `codex` CLI —
+confirm the details above against your installed version.
+
 ### What Argus does NOT protect you from
 
 - **A compromised or malicious Argus binary itself.** This is the inherent cost
