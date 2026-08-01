@@ -35,7 +35,7 @@ func wireHook(home string) error {
 		return fmt.Errorf("init: create %s: %w", filepath.Dir(path), err)
 	}
 
-	settings, err := readSettings(path)
+	settings, err := claudeReadSettings(path)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func wireHook(home string) error {
 			} else {
 				e["matcher"] = m + "|mcp__.*"
 			}
-			return writeSettings(path, settings)
+			return claudeWriteSettings(path, settings)
 		}
 		return nil
 	}
@@ -67,7 +67,7 @@ func wireHook(home string) error {
 			map[string]any{"type": "command", "command": gateWireCommand},
 		},
 	})
-	return writeSettings(path, settings)
+	return claudeWriteSettings(path, settings)
 }
 
 // settingsPath returns ~/.claude/settings.json under home.
@@ -75,9 +75,9 @@ func settingsPath(home string) string {
 	return filepath.Join(home, ".claude", "settings.json")
 }
 
-// readSettings decodes an existing settings.json, or returns a fresh empty
-// document if none exists yet.
-func readSettings(path string) (map[string]any, error) {
+// claudeReadSettings decodes an existing settings.json, or returns a fresh
+// empty document if none exists yet.
+func claudeReadSettings(path string) (map[string]any, error) {
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return map[string]any{}, nil
@@ -92,8 +92,8 @@ func readSettings(path string) (map[string]any, error) {
 	return settings, nil
 }
 
-// writeSettings marshals settings and writes them to path.
-func writeSettings(path string, settings map[string]any) error {
+// claudeWriteSettings marshals settings and writes them to path.
+func claudeWriteSettings(path string, settings map[string]any) error {
 	b, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return fmt.Errorf("init: marshal settings.json: %w", err)

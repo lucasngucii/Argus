@@ -48,7 +48,7 @@ func Doctor(home string, w io.Writer) int {
 }
 
 func checkHook(home string) error {
-	settings, err := readSettings(settingsPath(home))
+	settings, err := claudeReadSettings(settingsPath(home))
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func checkPolicy(home string) error {
 // matcher does not gate MCP tools (mcp__*) — an install from before MCP gating.
 // A re-run of `argus init` self-heals it. Does NOT change the exit code.
 func warnMissingMCPMatcher(home string, w io.Writer) {
-	settings, err := readSettings(settingsPath(home))
+	settings, err := claudeReadSettings(settingsPath(home))
 	if err != nil {
 		return
 	}
