@@ -19,6 +19,13 @@ Adds an uninstall command and fixes a for-loop false positive.
   can't remove its own leash; run it yourself in your terminal, where the hook
   never fires.
 
+- **`argus doctor` warns when a foreign `argus` shadows the gate.** The wired
+  hook runs the bare command `argus gate`, resolved via `PATH` at fire time, so
+  an unrelated same-named binary ahead of ours on `PATH` (there is an unaffiliated
+  `argus` on npm) would be exec'd instead and the gate would silently not fire.
+  Doctor now probes the `PATH` `argus` and WARNs if it doesn't identify as this
+  Argus, or if `argus` isn't on `PATH` at all.
+
 ### Fixed
 
 - **Benign `for` loops are no longer flagged as obfuscated.** A loop over a

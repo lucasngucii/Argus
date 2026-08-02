@@ -19,6 +19,14 @@ argus doctor    # confirm it's healthy
 Prebuilt for macOS & Linux (arm64/x64); anywhere else:
 `go install github.com/lucasngucii/argus/cmd/argus@latest`.
 
+Install the **scoped** name `@lucasngucii/argus` — the unscoped `argus` on npm
+is an unrelated package. Both expose a binary named `argus`, so if that other
+one is on your `PATH` it can shadow the gate: the wired hook runs the bare
+command `argus gate`, resolved via `PATH` at fire time, so a same-named binary
+ahead of ours would be exec'd instead and the gate would silently not fire.
+`argus doctor` checks the `argus` on your `PATH` and WARNs if it isn't this
+Argus — run it after installing.
+
 ### Codex
 
 ```bash
