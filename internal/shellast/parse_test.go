@@ -189,6 +189,113 @@ func TestForLoopUnresolvedListStaysObfuscated(t *testing.T) {
 	}
 }
 
+// A C-style `for ((...))` carries no value list, so its header is not resolved
+// as words — but a command substitution in the header still executes. It must
+// flag obfuscation (fail closed), while a benign arithmetic header stays clean.
+func TestForLoopCStyleHeaderCmdSubst(t *testing.T) {
+	if !Extract(`for (( i=$(rm -rf /); i<1; i++ )); do :; done`).Obfuscated {
+		t.Fatal("command substitution in a C-style for header must set Obfuscated")
+	}
+	if Extract(`for (( i=0; i<10; i++ )); do echo hi; done`).Obfuscated {
+		t.Fatal("benign C-style for header must not be obfuscated")
+	}
+}
+
+// Nested literal loops walk the body the product of the list lengths — a small
+// typed payload can reach 160k walks. The total is capped: the Commands slice
+// stays bounded and the truncated loop is flagged obfuscated so the untested
+// remainder escalates rather than being silently dropped.
+func TestForLoopNestedAmplificationCapped(t *testing.T) {
+	twenty := ""
+	for i := 0; i < 20; i++ {
+		twenty += "x" + string(rune('a'+i)) + " "
+	}
+	loop := "for a in " + twenty + "; do rm -rf /tmp/x; done"
+	for _, v := range []string{"b", "c", "d"} { // 20^4 unbounded
+		loop = "for " + v + " in " + twenty + "; do " + loop + "; done"
+	}
+	f := Extract(loop)
+	if len(f.Commands) > maxLoopBodyWalks {
+		t.Fatalf("body walks must be capped at %d, got %d", maxLoopBodyWalks, len(f.Commands))
+	}
+	if !f.Obfuscated {
+		t.Fatal("a truncated nested loop must be flagged obfuscated (fail closed)")
+	}
+	// A flat literal loop below the cap must still expand fully and stay clean.
+	flat := "for f in a b c d e; do echo \"$f\"; done"
+	if ff := Extract(flat); ff.Obfuscated || len(ff.Commands) != 5 {
+		t.Fatalf("flat benign loop must expand fully & stay clean, got %d cmds obf=%v", len(ff.Commands), ff.Obfuscated)
+	}
+}
+
+// The loop variable's prior binding must be restored after the loop so a
+// same-named variable outside is unaffected — a leak would silently rebind later
+// commands to the loop's last value.
+func TestForLoopVarBindingRestoredAfterLoop(t *testing.T) {
+	// X is `safe` before and after the loop; the trailing rm must resolve to it.
+	f := Extract(`X=safe; for X in a b c; do :; done; rm -rf "$X"`)
+	if !argContains(f, "rm", "safe") {
+		t.Fatalf("post-loop $X must restore to `safe`, got %+v", f.Commands)
+	}
+}
+
+// The loop var used in COMMAND position (not just an argument) is the natural
+// evasion of the binding logic: it must still surface the real command.
+func TestForLoopVarAsCommandNameSurfaces(t *testing.T) {
+	f := Extract(`for c in rm; do $c -rf /; done`)
+	if !hasCmd(f, "rm") {
+		t.Fatalf("loop var in command position must surface rm, got %+v", f.Commands)
+	}
+	if !argContains(f, "rm", "/") {
+		t.Fatalf("rm target `/` must be visible, got %+v", f.Commands)
+	}
+}
+
+// The loop var threaded into a redirect target must surface the concrete write
+// target; an unresolved list keeps the target unknown and stays obfuscated.
+func TestForLoopVarInRedirectTarget(t *testing.T) {
+	f := Extract(`for f in /etc/passwd; do : > "$f"; done`)
+	found := false
+	for _, r := range f.Redirects {
+		if r == "/etc/passwd" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("bound loop var must surface the concrete redirect target, got %v", f.Redirects)
+	}
+	if !Extract(`for f in $UNKNOWN; do : > "$f"; done`).Obfuscated {
+		t.Fatal("unresolved list in a redirect-target loop must stay obfuscated")
+	}
+}
+
+// A zero-iteration literal loop (`for x in; do ...`) never runs the body in a
+// real shell; Argus still walks it once, so a dangerous verb must surface (the
+// safe over-escalation direction).
+func TestForLoopEmptyListStillSurfacesBody(t *testing.T) {
+	if !hasCmd(Extract(`for x in; do rm -rf /; done`), "rm") {
+		t.Fatal("empty-list loop body must still surface rm (fail safe)")
+	}
+}
+
+// BenchmarkExtractNestedLoops guards the hot-path budget: nested literal loops
+// must stay cheap after the body-walk cap. Without the cap this input reaches
+// ~46ms; the cap keeps it well under the ~5ms budget.
+func BenchmarkExtractNestedLoops(b *testing.B) {
+	twenty := ""
+	for i := 0; i < 20; i++ {
+		twenty += "x" + string(rune('a'+i)) + " "
+	}
+	loop := "for a in " + twenty + "; do rm -rf /tmp/x; done"
+	for _, v := range []string{"b", "c", "d"} {
+		loop = "for " + v + " in " + twenty + "; do " + loop + "; done"
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = Extract(loop)
+	}
+}
+
 func TestArithmTestLetCmdSubstObfuscates(t *testing.T) {
 	for _, cmd := range []string{
 		"(( $(rm -rf /) ))",

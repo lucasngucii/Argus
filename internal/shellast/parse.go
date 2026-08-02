@@ -32,7 +32,18 @@ type Facts struct {
 	RawTokens  []string
 	Obfuscated bool
 	ParseOK    bool
+
+	// loopBudget bounds how many times a resolved for-loop body may be walked in
+	// one Extract, so nested literal loops (whose cost is the product of the list
+	// lengths) cannot blow the hot-path budget. When it is exhausted the remaining
+	// iterations are not expanded and the loop is flagged obfuscated — fail closed.
+	loopBudget int
 }
+
+// maxLoopBodyWalks caps total resolved for-loop body walks per Extract. A flat
+// literal loop of up to this many items still expands fully (real scripts sit far
+// below it); only pathological nesting (20^4 = 160k walks, ~46ms) is truncated.
+const maxLoopBodyWalks = 1024
 
 // wrappers are commands that run another command passed as their arguments. The
 // wrapped command must surface as its own Cmd so `sudo rm -rf /` cannot hide `rm`.
@@ -67,6 +78,7 @@ func Extract(command string) Facts {
 		return f
 	}
 	f.ParseOK = true
+	f.loopBudget = maxLoopBodyWalks
 	vars := map[string]string{}
 	for _, stmt := range file.Stmts {
 		processStmt(stmt, vars, &f)
@@ -177,12 +189,21 @@ func processStmt(stmt *syntax.Stmt, vars map[string]string, f *Facts) {
 // When any list word is unresolved (a command substitution or unknown
 // expansion), the loop's values are unknown: it flags obfuscation and walks the
 // body once with the variable UNBOUND, so a body reference stays fail-closed. A
-// C-style `for ((;;))` carries no value list — its body is walked once. The
-// prior binding of the variable's name is saved and restored so a same-named
-// variable outside the loop is unaffected.
+// C-style `for ((;;))` carries no value list — its body is walked once and its
+// header is scanned for a command substitution that would execute. The prior
+// binding of the variable's name is saved and restored so a same-named variable
+// outside the loop is unaffected. Total resolved body walks are capped
+// (maxLoopBodyWalks) so nested literal loops cannot blow the hot-path budget.
 func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
 	wi, ok := c.Loop.(*syntax.WordIter)
 	if !ok || wi.Name == nil {
+		// C-style `for ((init; cond; post))` (or an unnamed iterator): no value
+		// list to bind. A command substitution in the header executes, so scan the
+		// rendered loop for one (see hasCmdSubst) and fail closed if present — the
+		// body's own substitutions surface independently when we walk c.Do.
+		if hasCmdSubst(c) {
+			f.Obfuscated = true
+		}
 		for _, s := range c.Do {
 			processStmt(s, vars, f)
 		}
@@ -212,6 +233,14 @@ func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
 
 	if allResolved && len(values) > 0 {
 		for _, v := range values {
+			if f.loopBudget <= 0 {
+				// Body-walk budget exhausted (deeply nested literal loops): stop
+				// expanding and flag obfuscation so the untested remainder escalates
+				// rather than being silently dropped.
+				f.Obfuscated = true
+				return
+			}
+			f.loopBudget--
 			vars[name] = v
 			for _, s := range c.Do {
 				processStmt(s, vars, f)
