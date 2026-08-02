@@ -38,6 +38,13 @@ func main() {
 			os.Exit(1)
 		}
 		os.Exit(cli.RunInit(os.Args[2:], home, os.Stdout))
+	case "uninstall":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "argus: user home dir: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(cli.RunUninstall(os.Args[2:], home, os.Stdout))
 	case "doctor":
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -175,5 +182,5 @@ func replayCandidate(st *store.Store, home, policyPath string, ver int) (policy.
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: argus <gate|init|doctor|test|explain|stats|serve|replay|version>")
+	fmt.Fprintln(os.Stderr, "usage: argus <gate|init|uninstall|doctor|test|explain|stats|serve|replay|version>")
 }
