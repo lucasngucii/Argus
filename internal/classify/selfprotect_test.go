@@ -248,6 +248,48 @@ func TestSelfProtectCaseInsensitiveArgus(t *testing.T) {
 	}
 }
 
+// TestCannotSelfDisarmViaUninstall pins the net-new self-disarm vector: `argus
+// uninstall` removes the gate's own hook (and --purge deletes the policy +
+// history) by the SUBCOMMAND VERB, which the path-based self-protect rules can't
+// see. A prompt-injected agent must not disarm the gate with one allowed
+// command, so the resolved `argus uninstall` invocation floors high (→ deny).
+// Disarming stays possible for a human at their own terminal, where the hook
+// never fires. Variable indirection still resolves to the same command.
+func TestCannotSelfDisarmViaUninstall(t *testing.T) {
+	pol := policy.Default()
+	for _, cmd := range []string{
+		"argus uninstall",
+		"argus uninstall --purge",
+		"a=argus; $a uninstall",              // resolved via indirection
+		"/usr/local/bin/argus uninstall",     // covered by the bin/argus rule
+		"cd /tmp && argus uninstall --purge", // in a chain
+	} {
+		p := hook.Payload{ToolName: "Bash", ToolInput: hook.ToolInput{Command: cmd}}
+		if got := Classify(p, pol).Severity; got != "high" {
+			t.Fatalf("%q must floor high (self-disarm), got %s", cmd, got)
+		}
+	}
+}
+
+// TestUninstallFloorStaysFailSafe: matching resolved facts (not Raw subject
+// text) keeps the floor precise — other argus subcommands and incidental
+// mentions of the word "uninstall" in another command's args are NOT floored.
+func TestUninstallFloorStaysFailSafe(t *testing.T) {
+	pol := policy.Default()
+	for _, cmd := range []string{
+		"argus init",
+		"argus doctor",
+		"argus stats",
+		"echo see argus uninstall in the docs", // command is echo, not argus
+		`git commit -m "add argus uninstall"`,  // command is git
+	} {
+		p := hook.Payload{ToolName: "Bash", ToolInput: hook.ToolInput{Command: cmd}}
+		if got := Classify(p, pol).Severity; got == "high" {
+			t.Fatalf("%q must not be floored high, got %s", cmd, got)
+		}
+	}
+}
+
 func TestListingExemptionAllowsMetadataReads(t *testing.T) {
 	for _, cmd := range []string{
 		"ls ~/.argus", "ls ~/.claude", "ls ~/.ssh", "stat ~/.aws",
