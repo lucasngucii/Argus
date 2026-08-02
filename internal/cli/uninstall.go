@@ -73,7 +73,11 @@ func RunUninstall(argv []string, home string, w io.Writer) int {
 		fmt.Fprintln(w, "argus: kept ~/.argus (policy + decision history); re-run with --purge to remove it")
 	}
 
-	fmt.Fprintln(w, "argus: hooks removed. You can now remove the binary (npm uninstall -g / brew uninstall argus).")
+	if rc == 0 {
+		fmt.Fprintln(w, "argus: hooks removed. You can now remove the binary (npm uninstall -g / brew uninstall argus).")
+	} else {
+		fmt.Fprintln(w, "argus: one or more hooks could not be removed — resolve the errors above before removing the binary.")
+	}
 	return rc
 }
 
@@ -125,7 +129,13 @@ func unwireHookFile(path string) (bool, error) {
 			kept = append(kept, e)
 			continue
 		}
-		inner, _ := m["hooks"].([]any)
+		inner, hadSlice := m["hooks"].([]any)
+		if !hadSlice {
+			// No hooks array to touch (absent, or a malformed non-array value):
+			// round-trip the entry untouched rather than materializing "hooks": [].
+			kept = append(kept, m)
+			continue
+		}
 		filtered := make([]any, 0, len(inner))
 		for _, h := range inner {
 			if hm, ok := h.(map[string]any); ok {
