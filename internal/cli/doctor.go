@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/lucasngucii/argus/internal/policy"
 	"github.com/lucasngucii/argus/internal/store"
@@ -51,6 +54,7 @@ func Doctor(home string, w io.Writer) int {
 		// fresh box: no harness detected yet, still surface an actionable FAIL
 		report("hook: PreToolUse -> argus gate wired in ~/.claude/settings.json", Probe("claude-code", home))
 	}
+	warnShadowedArgus(w)
 	report("policy: policy.json loads and schema-validates", checkPolicy(home))
 	warnMissingMCPMatcher(home, w)
 	warnUnknownOverride(home, w)
@@ -84,6 +88,41 @@ func checkHook(home string) error {
 		return fmt.Errorf("no PreToolUse entry runs %q", gateCommand)
 	}
 	return nil
+}
+
+// warnShadowedArgus warns when the `argus` the wired hook will actually exec is
+// missing or is a DIFFERENT program than this Argus. The hook runs the bare
+// command `argus gate`, so it resolves `argus` via PATH at fire time — an
+// unrelated `argus` package (there is one on npm, unaffiliated) that wins PATH
+// would silently shadow the gate, which then never fires. This is a non-fatal
+// WARN and never changes the exit code: PATH is the user's to fix, and doctor's
+// job here is to make a silent shadow visible, not to fail CI over it.
+func warnShadowedArgus(w io.Writer) {
+	path, err := exec.LookPath("argus")
+	if err != nil {
+		fmt.Fprintln(w, "WARN argus: not found on PATH — the wired hook runs `argus gate`, which will fail to launch; put argus on your PATH")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, runErr := exec.CommandContext(ctx, path, "version").Output()
+	if msg, warn := shadowVerdict(path, string(out), runErr); warn {
+		fmt.Fprintln(w, msg)
+	}
+}
+
+// shadowVerdict is the pure core of warnShadowedArgus: given the PATH-resolved
+// argus and its `version` output/error, decide whether it looks like a foreign
+// binary shadowing ours. Our binary answers with `argus <semver>` (version-
+// agnostic on purpose — a mismatched version is still our gate); anything else,
+// or an error, means the hook may exec a different program.
+func shadowVerdict(path, versionOut string, runErr error) (string, bool) {
+	if runErr == nil && strings.HasPrefix(strings.TrimSpace(versionOut), "argus ") {
+		return "", false
+	}
+	return fmt.Sprintf("WARN argus: the `argus` on PATH (%s) does not identify as this Argus — "+
+		"the hook execs `argus gate` via PATH, so the gate may run a different program; "+
+		"install the scoped package @lucasngucii/argus and ensure it wins PATH", path), true
 }
 
 func checkPolicy(home string) error {

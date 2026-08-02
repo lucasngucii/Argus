@@ -256,5 +256,20 @@ func SelfProtectRules() []Rule {
 			Match: Match{Raw: `(?i)` + leadBoundary + `\.argus` + trailBoundary +
 				`|` + leadBoundary + `bin/argus` + trailBoundary},
 			Reason: "self-protection: argus config/db/binary"},
+		// `argus uninstall` disarms the gate by the SUBCOMMAND VERB, not a
+		// protected path, so the path rules above can't see it: a bare
+		// `argus uninstall` on $PATH would otherwise be allowed, letting a
+		// prompt-injected agent remove its own hook (and, with --purge, the policy
+		// and decision history). Match the RESOLVED command (name `argus`, first
+		// arg `uninstall`) so disarming the gate takes a human at their own
+		// terminal — the hook never fires there. Matching resolved facts (not Raw)
+		// keeps it precise: `echo argus uninstall` and a commit message that merely
+		// mentions the phrase are NOT floored (their command is echo/git), and
+		// variable indirection (`a=argus; $a uninstall`) still resolves to it. A
+		// path-qualified `/usr/local/bin/argus uninstall` is already floored by the
+		// bin/argus rule above. Bash-only (AST facts), never listing-exempt.
+		{ID: "self-protect-argus-uninstall", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
+			Match:  Match{Cmd: []string{"argus"}, ArgMatches: `^uninstall( |$)`},
+			Reason: "self-protection: argus uninstall disarms the gate"},
 	}
 }
