@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.1.13
+
+Adds an uninstall command and fixes a for-loop false positive.
+
+### Added
+
+- **`argus uninstall`** — the inverse of `init`. It removes Argus's PreToolUse
+  hook from every installed harness (Claude Code and Codex), stops the
+  background server if one is running, and prints the next step. `--purge` also
+  deletes `~/.argus` (policy + decision history); the default keeps it. Run this
+  **before** removing the binary: neither npm (v7+ runs no removal lifecycle
+  scripts) nor Homebrew cleans up the wired hook, so deleting the binary first
+  would leave a hook entry pointing at a now-missing `argus`. Unrelated hooks,
+  other events, and top-level config keys round-trip untouched. Because
+  uninstall disarms the gate, running it *through the agent* is itself floored
+  (`high` → deny) — a new `self-protect-argus-uninstall` rule — so an agent
+  can't remove its own leash; run it yourself in your terminal, where the hook
+  never fires.
+
+### Fixed
+
+- **Benign `for` loops are no longer flagged as obfuscated.** A loop over a
+  literal list (`for f in a b c; do head "$f"; done`) read the loop variable as
+  an unresolved expansion and forced a needless `ask`. Loop variables are now
+  bound to their concrete values, so the body resolves — and a dangerous
+  literal-list loop (`for f in / /etc; do rm -rf "$f"; done`) now surfaces its
+  concrete target to the high floor instead of hiding behind `$f`.
+- **A command substitution in a C-style `for ((...))` header is now caught.**
+  `for (( i=$(evil); ... ))` previously executed the substitution without
+  flagging obfuscation; the header is now scanned (fail closed).
+- **Nested literal loops can no longer blow the hot-path budget.** Total
+  for-loop body walks are capped per classification; a truncated loop is flagged
+  obfuscated so the untested remainder escalates. A pathological `20^4`-item
+  nest that reached ~46ms now stays at ~0.24ms, guarded by a benchmark.
+
 ## v0.1.12
 
 Adds Codex as a second supported harness alongside Claude Code.

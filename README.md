@@ -66,6 +66,24 @@ This adapter is verified against Codex's public documentation, not yet
 against a live `codex` CLI — confirm the details above against your
 installed version.
 
+### Uninstall
+
+```bash
+argus uninstall            # unwire the hook from every harness, stop the server
+npm uninstall -g @lucasngucii/argus   # then remove the binary
+```
+
+Run `argus uninstall` **before** removing the binary. Neither `npm` (v7+ runs
+no removal lifecycle scripts) nor Homebrew cleans up the wired hook, so deleting
+the binary first leaves a hook entry pointing at a now-missing `argus` — every
+gated call would then error. `uninstall` removes the hook from each installed
+harness, stops the background server, and by default **keeps** `~/.argus` (your
+policy and decision history); add `--purge` to delete that too.
+
+Run it **yourself** in your own terminal (as shown). Disarming the gate is a
+self-protected action, so `argus uninstall` invoked *by the agent* is denied —
+an agent must not be able to remove its own leash.
+
 ### Verifying your install
 
 Argus sits in front of every command your agent runs — so verify the binary
@@ -134,6 +152,7 @@ rule: git-danger      severity: medium   verdict: ask
 | Command | What it does |
 |---|---|
 | `argus init` | Set up `~/.argus/` and wire the hook. Claude Code by default; `--harness=codex` wires Codex. |
+| `argus uninstall [--purge]` | Remove Argus's hook from every installed harness and stop the background server. Run **before** removing the binary. `--purge` also deletes `~/.argus` (policy + history). |
 | `argus doctor` | Verify the install; warns if the policy dropped baseline coverage. Probes every installed harness. |
 | `argus explain <cmd>` | Dry-run one command: severity, firing rule, verdict, parsed facts. |
 | `argus stats [--jsonl]` | Decision digest / JSONL export. |
