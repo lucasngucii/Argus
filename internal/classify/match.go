@@ -58,7 +58,14 @@ func Matches(tool, subject string, f shellast.Facts, r policy.Rule) (matched boo
 		if err != nil {
 			return false, true
 		}
-		if !re.MatchString(subject) {
+		// Match the raw subject AND the resolved-argv view. The path floors
+		// (self-protect / credential) express a protected path as a Raw regex, but
+		// the shell normalizes away quotes and variables the raw text still shows —
+		// `cat ~/."ssh"/id_rsa` and `s=ssh; cat ~/.$s/id_rsa` both resolve to
+		// ~/.ssh/id_rsa yet hide `.ssh` from a subject-text match. Matching the
+		// resolved command names, args, and redirect targets too closes that
+		// bypass; it only ever adds matches (fail-safe), never removes one.
+		if !re.MatchString(subject) && !re.MatchString(resolvedSubject(f)) {
 			matched = false
 		}
 	}
@@ -112,18 +119,56 @@ func matchedCommands(names []string, cmds []shellast.Cmd) []shellast.Cmd {
 	}
 	var out []shellast.Cmd
 	for _, c := range cmds {
+		base := commandBasename(c.Name)
 		for _, n := range names {
-			// Exact name, or a `<name>.<suffix>` family variant — the Unix
-			// convention where `tool.type` is a build of `tool` (mkfs.ext4,
-			// mkfs.xfs). A trailing "." only, never "-", so this never conflates
-			// distinct binaries like docker vs docker-compose.
-			if c.Name == n || strings.HasPrefix(c.Name, n+".") {
+			// Exact name, its basename (so a path-qualified `/bin/rm` or `./argus`
+			// matches `rm`/`argus` — a command is that command however it's spelled),
+			// or a `<name>.<suffix>` family variant — the Unix convention where
+			// `tool.type` is a build of `tool` (mkfs.ext4, mkfs.xfs). A trailing "."
+			// only, never "-", so this never conflates distinct binaries like docker
+			// vs docker-compose.
+			if base == n || strings.HasPrefix(base, n+".") {
 				out = append(out, c)
 				break
 			}
 		}
 	}
 	return out
+}
+
+// commandBasename strips a leading path from a resolved command name so a
+// path-qualified invocation (`/bin/rm`, `./argus`, `dist/argus`) matches the
+// same rules as the bare name. A trailing slash (unusual) leaves the name as-is.
+func commandBasename(name string) string {
+	if i := strings.LastIndexByte(name, '/'); i >= 0 && i+1 < len(name) {
+		return name[i+1:]
+	}
+	return name
+}
+
+// resolvedSubject is a space-joined view of the resolved command names, args,
+// and redirect targets — the true argv the shell would run, with quotes and
+// variables already resolved. Raw path-floor regexes match against this in
+// addition to the subject text so a quote/variable-obscured protected path
+// (`~/."ssh"/id_rsa`) is still caught. Empty for non-Bash tools (no shell AST).
+func resolvedSubject(f shellast.Facts) string {
+	if len(f.Commands) == 0 && len(f.Redirects) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, c := range f.Commands {
+		b.WriteString(c.Name)
+		b.WriteByte(' ')
+		for _, a := range c.Args {
+			b.WriteString(a)
+			b.WriteByte(' ')
+		}
+	}
+	for _, r := range f.Redirects {
+		b.WriteString(r)
+		b.WriteByte(' ')
+	}
+	return b.String()
 }
 
 // hasAllFlags reports whether every required flag letter appears among cmds'

@@ -262,6 +262,9 @@ func TestCannotSelfDisarmViaUninstall(t *testing.T) {
 		"argus uninstall --purge",
 		"a=argus; $a uninstall",              // resolved via indirection
 		"/usr/local/bin/argus uninstall",     // covered by the bin/argus rule
+		"./argus uninstall",                  // path-qualified — basename match
+		"dist/argus uninstall --purge",       // relative build path
+		"/opt/argus/argus uninstall",         // path with no bin/ segment
 		"cd /tmp && argus uninstall --purge", // in a chain
 	} {
 		p := hook.Payload{ToolName: "Bash", ToolInput: hook.ToolInput{Command: cmd}}
@@ -286,6 +289,33 @@ func TestUninstallFloorStaysFailSafe(t *testing.T) {
 		p := hook.Payload{ToolName: "Bash", ToolInput: hook.ToolInput{Command: cmd}}
 		if got := Classify(p, pol).Severity; got == "high" {
 			t.Fatalf("%q must not be floored high, got %s", cmd, got)
+		}
+	}
+}
+
+// TestResolvedPathFloorsBeatQuoteAndVarSplit pins the fix for the audit's
+// critical bypass: the path floors match the RESOLVED argv, not just the raw
+// subject text, so quotes and variables the shell normalizes away can no longer
+// hide a protected segment. `cat ~/."ssh"/id_rsa` is byte-identical to
+// `cat ~/.ssh/id_rsa` to the shell and must floor the same.
+func TestResolvedPathFloorsBeatQuoteAndVarSplit(t *testing.T) {
+	pol := policy.Default()
+	for _, cmd := range []string{
+		`cat ~/."ssh"/id_rsa`,             // quote-split, no variable
+		`cat ~/.ss''h/id_rsa`,             // adjacent-quote split
+		`s=ssh; cat ~/.$s/id_rsa`,         // variable-assembled
+		`a=aws; cat ~/.$a/credentials`,    // variable-assembled credential
+		`tee ~/."claude"/settings.json`,   // quote-split hook wiring write
+		`v=argus; echo x > ~/.$v/db`,      // variable-assembled argus write (redirect)
+	} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; got != "high" {
+			t.Fatalf("%q must floor high via resolved argv, got %s", cmd, got)
+		}
+	}
+	// The resolved view must NOT over-match a benign path that merely resolves.
+	for _, cmd := range []string{`ls ~/.ssh_backup`, `cat ~/.claude/projects/x/memory/f.md`} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; got == "high" {
+			t.Fatalf("false positive: %q resolved to high", cmd)
 		}
 	}
 }
