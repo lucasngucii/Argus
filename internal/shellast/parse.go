@@ -219,6 +219,9 @@ func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
 		for _, s := range c.Do {
 			processStmt(s, child, f)
 		}
+		// Iteration count is unknown; assume it runs so a body reassignment is
+		// visible to later commands (over-surfacing if it doesn't is fail-safe).
+		propagateVars(child, vars)
 		return
 	}
 
@@ -249,14 +252,30 @@ func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
 				processStmt(s, child, f)
 			}
 		}
+		// A resolved non-empty list runs at least once, so in a real shell the
+		// body's final assignments (and the loop var = last value) persist.
+		// Propagate them so a later `$X` sees what the loop actually left, not a
+		// stale pre-loop value that could mask a verb (`X=ls; for f in a; do X=rm;
+		// done; $X -rf /`). An EMPTY or unresolved list (below) may run zero times,
+		// so its body assignments must NOT leak — that stays isolated.
+		propagateVars(child, vars)
 		return
 	}
-	// Unresolved (or empty) list: the values are unknown, so walk the body once
-	// with the variable unbound — any reference to it stays unresolved and the
-	// loop is already flagged obfuscated above.
+	// Unresolved (or empty) list: the values are unknown (may run zero times), so
+	// walk the body once with the variable unbound and DO NOT propagate — a body
+	// reference stays unresolved and the unresolved case is already obfuscated.
 	delete(child, name)
 	for _, s := range c.Do {
 		processStmt(s, child, f)
+	}
+}
+
+// propagateVars copies a loop body's child scope back into the parent, so an
+// assignment a loop that runs makes is visible to later resolution. Only called
+// for loops that execute at least once (or a C-style loop, conservatively).
+func propagateVars(child, vars map[string]string) {
+	for k, v := range child {
+		vars[k] = v
 	}
 }
 

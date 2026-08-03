@@ -217,23 +217,39 @@ func TestForLoopUnresolvedListStaysObfuscated(t *testing.T) {
 	}
 }
 
-// A loop body's assignments must not leak into later resolution: a loop can run
-// zero times, so `X=rm; for f in; do X=ls; done; $X -rf /` must still see the
-// pre-loop X=rm and surface `rm`, not the benign `ls` the never-run body sets.
-func TestForLoopBodyAssignmentDoesNotLeak(t *testing.T) {
+// An EMPTY loop runs zero times, so its body assignments must NOT leak: `X=rm;
+// for f in; do X=ls; done; $X -rf /` must still see the pre-loop X=rm and surface
+// `rm`, matching a real shell where the never-run body leaves X=rm.
+func TestForLoopEmptyBodyAssignmentDoesNotLeak(t *testing.T) {
 	for _, cmd := range []string{
-		`X=rm; for f in; do X=ls; done; $X -rf /`,     // explicit empty list
-		`X=rm; for f; do X=ls; done; $X -rf /`,        // empty "$@"
-		`X=rm; for f in a b; do X=ls; done; $X -rf /`, // non-empty: still uncertain
+		`X=rm; for f in; do X=ls; done; $X -rf /`, // explicit empty list
+		`X=rm; for f; do X=ls; done; $X -rf /`,    // empty "$@"
 	} {
-		f := Extract(cmd)
-		if !hasCmd(f, "rm") {
-			t.Fatalf("%q: pre-loop X=rm must surface; body X=ls must not leak, got %+v", cmd, f.Commands)
+		if f := Extract(cmd); !hasCmd(f, "rm") {
+			t.Fatalf("%q: empty loop must not leak X=ls; pre-loop rm must surface, got %+v", cmd, f.Commands)
 		}
 	}
-	// The loop variable itself is scoped too: X restores to its pre-loop value.
-	if !argContains(Extract(`X=safe; for X in a b c; do :; done; rm -rf "$X"`), "rm", "safe") {
-		t.Fatal("post-loop $X must resolve to the pre-loop value `safe`")
+}
+
+// A loop that DOES run (resolved non-empty list, or a C-style loop) leaves its
+// body's final assignments in scope, exactly like a real shell — so a benign
+// pre-loop value reassigned to a dangerous one inside the body must surface, not
+// be masked by the stale outer value. `X=ls; for f in a; do X=rm; done; $X -rf /`
+// runs `rm -rf /` in bash and must here too.
+func TestForLoopRunBodyAssignmentPropagates(t *testing.T) {
+	for _, cmd := range []string{
+		`X=ls; for f in a; do X=rm; done; $X -rf /`,          // resolved non-empty
+		`X=ls; for f in a b c; do X=rm; done; $X -rf /`,      // multi-item
+		`X=ls; for ((n=0;n<1;n++)); do X=rm; done; $X -rf /`, // C-style
+	} {
+		if f := Extract(cmd); !hasCmd(f, "rm") {
+			t.Fatalf("%q: a loop that runs must propagate X=rm, got %+v", cmd, f.Commands)
+		}
+	}
+	// The loop variable is left at its LAST value after a resolved loop (bash
+	// semantics), so a later reference resolves to it.
+	if !argContains(Extract(`for X in a b /etc; do :; done; rm -rf "$X"`), "rm", "/etc") {
+		t.Fatal("post-loop $X must be the last list value `/etc`")
 	}
 }
 
@@ -273,17 +289,6 @@ func TestForLoopNestedAmplificationCapped(t *testing.T) {
 	flat := "for f in a b c d e; do echo \"$f\"; done"
 	if ff := Extract(flat); ff.Obfuscated || len(ff.Commands) != 5 {
 		t.Fatalf("flat benign loop must expand fully & stay clean, got %d cmds obf=%v", len(ff.Commands), ff.Obfuscated)
-	}
-}
-
-// The loop variable's prior binding must be restored after the loop so a
-// same-named variable outside is unaffected — a leak would silently rebind later
-// commands to the loop's last value.
-func TestForLoopVarBindingRestoredAfterLoop(t *testing.T) {
-	// X is `safe` before and after the loop; the trailing rm must resolve to it.
-	f := Extract(`X=safe; for X in a b c; do :; done; rm -rf "$X"`)
-	if !argContains(f, "rm", "safe") {
-		t.Fatalf("post-loop $X must restore to `safe`, got %+v", f.Commands)
 	}
 }
 
