@@ -90,6 +90,35 @@ func checkHook(home string) error {
 	return nil
 }
 
+// argusProbe is what the `argus` on PATH reported when doctor probed it.
+type argusProbe struct {
+	path    string // resolved PATH location; empty when not on PATH
+	version string // stdout of `argus version`
+	runErr  error  // error running it (timeout, non-zero exit, …)
+}
+
+// pathArgusProbe resolves and runs the `argus` on PATH. It is a package var so
+// tests stub it for hermetic, deterministic Doctor() output instead of shelling
+// out to whatever `argus` is on the test machine's PATH.
+var pathArgusProbe = realPathArgusProbe
+
+func realPathArgusProbe() argusProbe {
+	path, err := exec.LookPath("argus")
+	if err != nil {
+		return argusProbe{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "version")
+	// WaitDelay bounds Output() even when a descendant inherits and holds the
+	// stdout pipe after the direct child is killed — the npm launcher spawns the
+	// real binary as such a grandchild, so without this the 3s ctx timeout is
+	// illusory and a hung argus would hang doctor (and, in tests, the suite).
+	cmd.WaitDelay = 500 * time.Millisecond
+	out, runErr := cmd.Output()
+	return argusProbe{path: path, version: string(out), runErr: runErr}
+}
+
 // warnShadowedArgus warns when the `argus` the wired hook will actually exec is
 // missing or is a DIFFERENT program than this Argus. The hook runs the bare
 // command `argus gate`, so it resolves `argus` via PATH at fire time — an
@@ -98,26 +127,30 @@ func checkHook(home string) error {
 // WARN and never changes the exit code: PATH is the user's to fix, and doctor's
 // job here is to make a silent shadow visible, not to fail CI over it.
 func warnShadowedArgus(w io.Writer) {
-	path, err := exec.LookPath("argus")
-	if err != nil {
+	p := pathArgusProbe()
+	if p.path == "" {
 		fmt.Fprintln(w, "WARN argus: not found on PATH — the wired hook runs `argus gate`, which will fail to launch; put argus on your PATH")
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	out, runErr := exec.CommandContext(ctx, path, "version").Output()
-	if msg, warn := shadowVerdict(path, string(out), runErr); warn {
+	if msg, warn := shadowVerdict(p.path, p.version, p.runErr); warn {
 		fmt.Fprintln(w, msg)
 	}
 }
 
 // shadowVerdict is the pure core of warnShadowedArgus: given the PATH-resolved
 // argus and its `version` output/error, decide whether it looks like a foreign
-// binary shadowing ours. Our binary answers with `argus <semver>` (version-
-// agnostic on purpose — a mismatched version is still our gate); anything else,
-// or an error, means the hook may exec a different program.
+// binary shadowing ours. Our binary answers `argus <semver>`, so we require the
+// name followed by a version-looking token (a digit) — version-agnostic on
+// purpose (a mismatched version is still our gate), but tight enough that a
+// foreign tool merely printing "argus is …" doesn't pass. A same-named tool that
+// also prints an `argus <version>` banner cannot be told apart from the banner
+// alone (the launcher indirection rules out a path comparison) — a documented
+// limit: this catches a bare impostor, not a deliberate same-name competitor.
 func shadowVerdict(path, versionOut string, runErr error) (string, bool) {
-	if runErr == nil && strings.HasPrefix(strings.TrimSpace(versionOut), "argus ") {
+	v := strings.TrimSpace(versionOut)
+	const prefix = "argus "
+	if runErr == nil && strings.HasPrefix(v, prefix) && len(v) > len(prefix) &&
+		v[len(prefix)] >= '0' && v[len(prefix)] <= '9' {
 		return "", false
 	}
 	return fmt.Sprintf("WARN argus: the `argus` on PATH (%s) does not identify as this Argus — "+
