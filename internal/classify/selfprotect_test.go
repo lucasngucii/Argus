@@ -301,12 +301,12 @@ func TestUninstallFloorStaysFailSafe(t *testing.T) {
 func TestResolvedPathFloorsBeatQuoteAndVarSplit(t *testing.T) {
 	pol := policy.Default()
 	for _, cmd := range []string{
-		`cat ~/."ssh"/id_rsa`,             // quote-split, no variable
-		`cat ~/.ss''h/id_rsa`,             // adjacent-quote split
-		`s=ssh; cat ~/.$s/id_rsa`,         // variable-assembled
-		`a=aws; cat ~/.$a/credentials`,    // variable-assembled credential
-		`tee ~/."claude"/settings.json`,   // quote-split hook wiring write
-		`v=argus; echo x > ~/.$v/db`,      // variable-assembled argus write (redirect)
+		`cat ~/."ssh"/id_rsa`,           // quote-split, no variable
+		`cat ~/.ss''h/id_rsa`,           // adjacent-quote split
+		`s=ssh; cat ~/.$s/id_rsa`,       // variable-assembled
+		`a=aws; cat ~/.$a/credentials`,  // variable-assembled credential
+		`tee ~/."claude"/settings.json`, // quote-split hook wiring write
+		`v=argus; echo x > ~/.$v/db`,    // variable-assembled argus write (redirect)
 	} {
 		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; got != "high" {
 			t.Fatalf("%q must floor high via resolved argv, got %s", cmd, got)
@@ -316,6 +316,56 @@ func TestResolvedPathFloorsBeatQuoteAndVarSplit(t *testing.T) {
 	for _, cmd := range []string{`ls ~/.ssh_backup`, `cat ~/.claude/projects/x/memory/f.md`} {
 		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; got == "high" {
 			t.Fatalf("false positive: %q resolved to high", cmd)
+		}
+	}
+}
+
+// TestDbDestructiveAnchoredToClients pins the false-positive fix: the
+// db-destructive floor now fires only when a destructive statement is passed to
+// a real DB client, not on any command whose text mentions "drop table".
+func TestDbDestructiveAnchoredToClients(t *testing.T) {
+	pol := policy.Default()
+	// Must NOT floor: the phrase in a commit message / echo.
+	for _, cmd := range []string{
+		"echo drop table users",
+		`git commit -m "drop table users migration"`,
+		`git commit -m "delete from cache on logout"`,
+	} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; got == "high" {
+			t.Fatalf("false positive: %q floored high", cmd)
+		}
+	}
+	// Must still floor: a destructive statement to an actual client.
+	for _, cmd := range []string{
+		`psql -c "drop table users"`,
+		`mysql -e "delete from sessions"`,
+	} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; got != "high" {
+			t.Fatalf("%q must floor high, got %s", cmd, got)
+		}
+	}
+}
+
+// TestLeadBoundaryEqualsCatchesFlagValuePaths pins the leadBoundary `=` fix: a
+// protected path supplied as a --flag=path value is no longer hidden by the `=`.
+func TestLeadBoundaryEqualsCatchesFlagValuePaths(t *testing.T) {
+	pol := policy.Default()
+	if got := Classify(bash("git config --file=.claude/settings.json k v", "default", "/tmp"), pol).Severity; got != "high" {
+		t.Fatalf("--file=.claude/settings.json must floor high, got %s", got)
+	}
+}
+
+// TestMCPReadVerbSynonymsCatchCredentialReads pins the M5 fix: read-verb
+// synonyms beyond the original list still escalate an MCP credential read.
+func TestMCPReadVerbSynonymsCatchCredentialReads(t *testing.T) {
+	pol := policy.Default()
+	args := `{"path":"/home/x/.ssh/id_rsa"}`
+	for _, tool := range []string{
+		"mcp__fs__retrieve_file", "mcp__fs__slurp", "mcp__fs__access",
+		"mcp__fs__pull", "mcp__fs__file_contents",
+	} {
+		if got := Classify(mcp(tool, args), pol).Severity; rank(got) < rank("medium") {
+			t.Fatalf("%s reading a credential path must be >= medium, got %s", tool, got)
 		}
 	}
 }
