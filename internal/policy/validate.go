@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"regexp"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -29,6 +30,35 @@ func Validate(b []byte) error {
 	}
 	if err := sch.Validate(doc); err != nil {
 		return fmt.Errorf("validate policy: %w", err)
+	}
+	return validateRuleRegexes(b)
+}
+
+// validateRuleRegexes rejects a policy whose rule carries a Raw/argMatches/
+// mcpTool pattern that fails to compile. Without this a typo'd regex passes the
+// schema (it only checks the field is a string) but silently matches nothing at
+// classify time — a dead deny rule that looks installed. Failing at the door
+// makes Load error (so doctor FAILs and the gate falls back to the baseline)
+// instead of leaving a rule that provides zero coverage. Built-in rules are
+// compile-time constants and all compile; this guards user-authored rules.
+func validateRuleRegexes(b []byte) error {
+	var f File
+	if err := json.Unmarshal(b, &f); err != nil {
+		return fmt.Errorf("parse policy rules: %w", err)
+	}
+	for _, r := range f.Rules {
+		for _, p := range []struct{ field, pattern string }{
+			{"raw", r.Match.Raw},
+			{"argMatches", r.Match.ArgMatches},
+			{"mcpTool", r.Match.McpTool},
+		} {
+			if p.pattern == "" {
+				continue
+			}
+			if _, err := regexp.Compile(p.pattern); err != nil {
+				return fmt.Errorf("rule %q: invalid %s regex: %w", r.ID, p.field, err)
+			}
+		}
 	}
 	return nil
 }

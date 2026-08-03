@@ -33,6 +33,13 @@ func RunUninstall(argv []string, home string, w io.Writer) int {
 		}
 		return 2
 	}
+	if fs.NArg() > 0 {
+		// A stray positional (a typo'd flag, an unexpected path) must not be
+		// silently swallowed into a full uninstall — surface it and stop.
+		fmt.Fprintf(w, "argus: uninstall: unexpected argument %q\n", fs.Arg(0))
+		fs.Usage()
+		return 2
+	}
 
 	rc := 0
 	// Unwire each harness whose config dir exists (idempotent per harness).
@@ -102,8 +109,10 @@ func Unwire(name, home string) (bool, error) {
 // unwireHookFile drops every inner PreToolUse hook whose command runs argus gate
 // (matched by the gateCommand substring, the same identity Wire/doctor use),
 // removing an entry left with no inner hooks. Everything else — other events,
-// other tools' hooks, unrelated top-level keys — round-trips byte-for-byte. A
-// missing file or an absent gate hook is a no-op returning removed=false.
+// other tools' hooks, unrelated top-level keys — is preserved (values intact,
+// though the file is re-serialized on a change, so key order/formatting are not
+// byte-stable). A missing file or an absent gate hook is a no-op that does not
+// rewrite the file at all and returns removed=false.
 func unwireHookFile(path string) (bool, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return false, nil

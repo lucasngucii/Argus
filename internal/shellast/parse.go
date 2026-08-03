@@ -6,6 +6,7 @@ package shellast
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -106,15 +107,18 @@ func processStmt(stmt *syntax.Stmt, vars map[string]string, f *Facts) {
 			}
 		}
 	}
+	if shellReadsRedirectedCode(stmt, vars) {
+		// `bash <<< "rm -rf /"` / `sh <<EOF … EOF` — a shell executing code read
+		// from a here-string/here-doc is argv-invisible smuggling, like decoder|sh.
+		f.Obfuscated = true
+	}
 	switch c := stmt.Cmd.(type) {
 	case *syntax.CallExpr:
 		processCall(c, vars, f)
 	case *syntax.BinaryCmd:
 		processStmt(c.X, vars, f)
 		if c.Op == syntax.Pipe || c.Op == syntax.PipeAll {
-			if name := leadingName(c.Y, vars); name != "" {
-				f.PipeSinks = append(f.PipeSinks, name)
-			}
+			f.PipeSinks = append(f.PipeSinks, sinkNames(c.Y, vars)...)
 			if decoderIntoShell(pipelineNames(stmt, vars)) {
 				f.Obfuscated = true
 			}
@@ -190,11 +194,19 @@ func processStmt(stmt *syntax.Stmt, vars map[string]string, f *Facts) {
 // expansion), the loop's values are unknown: it flags obfuscation and walks the
 // body once with the variable UNBOUND, so a body reference stays fail-closed. A
 // C-style `for ((;;))` carries no value list — its body is walked once and its
-// header is scanned for a command substitution that would execute. The prior
-// binding of the variable's name is saved and restored so a same-named variable
-// outside the loop is unaffected. Total resolved body walks are capped
-// (maxLoopBodyWalks) so nested literal loops cannot blow the hot-path budget.
+// header is scanned for a command substitution that would execute. The body is
+// walked in a copy of the variable scope so neither the loop variable nor any
+// other assignment the body makes leaks into later resolution (a loop may run
+// zero times). Total resolved body walks are capped (maxLoopBodyWalks) so nested
+// literal loops cannot blow the hot-path budget.
 func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
+	// Walk the body in a CHILD scope (a copy of vars). A loop may run zero times,
+	// so any assignment its body makes is uncertain — letting it leak into the
+	// outer scope could rebind a later `$X` to a benign value and mask a real
+	// verb (`X=rm; for f in; do X=ls; done; $X -rf /`). The child inherits the
+	// outer bindings so the body still resolves outer vars and the loop var.
+	child := cloneVars(vars)
+
 	wi, ok := c.Loop.(*syntax.WordIter)
 	if !ok || wi.Name == nil {
 		// C-style `for ((init; cond; post))` (or an unnamed iterator): no value
@@ -205,7 +217,7 @@ func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
 			f.Obfuscated = true
 		}
 		for _, s := range c.Do {
-			processStmt(s, vars, f)
+			processStmt(s, child, f)
 		}
 		return
 	}
@@ -222,15 +234,6 @@ func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
 		values = append(values, v)
 	}
 
-	saved, had := vars[name]
-	defer func() {
-		if had {
-			vars[name] = saved
-		} else {
-			delete(vars, name)
-		}
-	}()
-
 	if allResolved && len(values) > 0 {
 		for _, v := range values {
 			if f.loopBudget <= 0 {
@@ -241,9 +244,9 @@ func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
 				return
 			}
 			f.loopBudget--
-			vars[name] = v
+			child[name] = v
 			for _, s := range c.Do {
-				processStmt(s, vars, f)
+				processStmt(s, child, f)
 			}
 		}
 		return
@@ -251,9 +254,9 @@ func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
 	// Unresolved (or empty) list: the values are unknown, so walk the body once
 	// with the variable unbound — any reference to it stays unresolved and the
 	// loop is already flagged obfuscated above.
-	delete(vars, name)
+	delete(child, name)
 	for _, s := range c.Do {
-		processStmt(s, vars, f)
+		processStmt(s, child, f)
 	}
 }
 
@@ -361,7 +364,14 @@ func resolveParts(parts []syntax.WordPart, vars map[string]string) (string, bool
 		case *syntax.Lit:
 			b.WriteString(pp.Value)
 		case *syntax.SglQuoted:
-			b.WriteString(pp.Value)
+			if pp.Dollar {
+				// ANSI-C $'...': the shell decodes \xNN, \NNN, \uNNNN, \n, … before
+				// use. Emit the DECODED bytes so an escaped verb (`$'\x72\x6d'` = rm)
+				// surfaces instead of reading as a benign literal that no rule matches.
+				b.WriteString(decodeANSIC(pp.Value))
+			} else {
+				b.WriteString(pp.Value)
+			}
 		case *syntax.DblQuoted:
 			text, ok := resolveParts(pp.Parts, vars)
 			b.WriteString(text)
@@ -369,7 +379,12 @@ func resolveParts(parts []syntax.WordPart, vars map[string]string) (string, bool
 				resolved = false
 			}
 		case *syntax.ParamExp:
-			if pp.Param != nil {
+			// Only a PLAIN $name / ${name} is statically resolvable. Any modifier —
+			// ${!x} indirect, ${x#p}/${x%s}/${x:-y}, ${x/a/b}, ${x:o:l}, ${x,,},
+			// ${#x}, ${x[i]} — transforms the value, so emitting the untransformed
+			// lookup would read a benign stored string where the shell produces a
+			// dangerous one. Treat every non-plain form as unresolved (fail closed).
+			if isPlainParam(pp) {
 				if v, ok := vars[pp.Param.Value]; ok {
 					b.WriteString(v)
 					continue
@@ -384,27 +399,157 @@ func resolveParts(parts []syntax.WordPart, vars map[string]string) (string, bool
 	return b.String(), resolved
 }
 
-// leadingName is the resolved name of the first simple command in a statement,
-// used to label pipe sinks. It never mutates Facts.
-func leadingName(stmt *syntax.Stmt, vars map[string]string) string {
-	if stmt == nil {
-		return ""
-	}
-	switch c := stmt.Cmd.(type) {
-	case *syntax.CallExpr:
-		if len(c.Args) == 0 {
-			return ""
-		}
-		text, _ := resolveWord(c.Args[0], vars)
-		return text
-	case *syntax.BinaryCmd:
-		return leadingName(c.X, vars)
-	}
-	return ""
+// isPlainParam reports whether a parameter expansion is a bare $name / ${name}
+// with no transforming modifier — the only form whose value is a direct variable
+// lookup. Mirrors syntax.ParamExp.simple() (unexported): any indirection, length,
+// index, slice, replace, case-mod, or ${...}-expansion means the emitted text
+// would differ from the stored value, so the caller must treat it as unresolved.
+func isPlainParam(p *syntax.ParamExp) bool {
+	return p.Param != nil && p.Flags == nil &&
+		!p.Excl && !p.Length && !p.Width && !p.IsSet &&
+		p.NestedParam == nil && p.Index == nil &&
+		len(p.Modifiers) == 0 && p.Slice == nil &&
+		p.Repl == nil && p.Names == 0 && p.Exp == nil
 }
 
-// pipelineNames returns the leading command name of every stage in a pipe chain,
-// in left-to-right order, so decoder-into-shell ordering can be detected.
+// decodeANSIC decodes the escape sequences of a Bash ANSI-C $'...' string the
+// same way the shell does, so an escaped command verb is seen as its real bytes.
+// An unrecognized `\x` is kept literally (backslash + char), matching bash.
+func decodeANSIC(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) {
+			b.WriteByte(s[i])
+			continue
+		}
+		i++
+		switch e := s[i]; e {
+		case 'a':
+			b.WriteByte(0x07)
+		case 'b':
+			b.WriteByte(0x08)
+		case 'e', 'E':
+			b.WriteByte(0x1b)
+		case 'f':
+			b.WriteByte(0x0c)
+		case 'n':
+			b.WriteByte(0x0a)
+		case 'r':
+			b.WriteByte(0x0d)
+		case 't':
+			b.WriteByte(0x09)
+		case 'v':
+			b.WriteByte(0x0b)
+		case '\\', '\'', '"', '?':
+			b.WriteByte(e)
+		case 'x':
+			j := i + 1
+			for j < len(s) && j <= i+2 && isHexDigit(s[j]) {
+				j++
+			}
+			if j > i+1 {
+				v, _ := strconv.ParseUint(s[i+1:j], 16, 32)
+				b.WriteByte(byte(v))
+				i = j - 1
+			} else {
+				b.WriteByte('\\')
+				b.WriteByte('x')
+			}
+		case 'u', 'U':
+			width := 4
+			if e == 'U' {
+				width = 8
+			}
+			j := i + 1
+			for j < len(s) && j <= i+width && isHexDigit(s[j]) {
+				j++
+			}
+			if j > i+1 {
+				v, _ := strconv.ParseUint(s[i+1:j], 16, 32)
+				b.WriteRune(rune(v))
+				i = j - 1
+			} else {
+				b.WriteByte('\\')
+				b.WriteByte(e)
+			}
+		case 'c':
+			if i+1 < len(s) {
+				b.WriteByte(s[i+1] & 0x1f)
+				i++
+			} else {
+				b.WriteByte('\\')
+				b.WriteByte('c')
+			}
+		default:
+			if e >= '0' && e <= '7' {
+				j := i
+				for j < len(s) && j <= i+2 && s[j] >= '0' && s[j] <= '7' {
+					j++
+				}
+				v, _ := strconv.ParseUint(s[i:j], 8, 32)
+				b.WriteByte(byte(v))
+				i = j - 1
+			} else {
+				// Unrecognized escape: bash keeps the backslash and the char.
+				b.WriteByte('\\')
+				b.WriteByte(e)
+			}
+		}
+	}
+	return b.String()
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+// cloneVars returns a shallow copy of a variable scope, used to give a loop body
+// a child scope whose assignments cannot leak into later resolution.
+func cloneVars(vars map[string]string) map[string]string {
+	out := make(map[string]string, len(vars))
+	for k, v := range vars {
+		out[k] = v
+	}
+	return out
+}
+
+// sinkNames returns the command names a single (non-pipe) stage runs: the
+// leading command, plus — when that command is a prefix wrapper (sudo/env/
+// timeout/nice/…) — EVERY non-flag, non-assignment token after it as a candidate
+// wrapped command. A wrapper's command position varies (`timeout 5 bash`,
+// `nice -n 10 bash`), so picking one token could miss the real interpreter;
+// over-emitting a harmless phantom (`5`) is the safe direction. This is why
+// `… | timeout 5 bash` still surfaces `bash`, so the pipe-to-shell floor and
+// decoder-into-shell can't be dodged by inserting a wrapper before the shell.
+// It never mutates Facts. (Same over-emit rationale as emitInner.)
+func sinkNames(stmt *syntax.Stmt, vars map[string]string) []string {
+	if stmt == nil {
+		return nil
+	}
+	call, ok := stmt.Cmd.(*syntax.CallExpr)
+	if !ok || len(call.Args) == 0 {
+		return nil
+	}
+	name, ok := resolveWord(call.Args[0], vars)
+	if !ok {
+		return nil
+	}
+	out := []string{name}
+	if wrappers[name] {
+		for _, w := range call.Args[1:] {
+			text, ok := resolveWord(w, vars)
+			if !ok || strings.HasPrefix(text, "-") || assignToken.MatchString(text) {
+				continue // a wrapper option or NAME=VALUE, not the wrapped command
+			}
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+// pipelineNames returns the command names of every stage in a pipe chain, in
+// left-to-right order (wrappers unwrapped), so decoder-into-shell ordering can
+// be detected even when a wrapper sits between the decoder and the shell.
 func pipelineNames(stmt *syntax.Stmt, vars map[string]string) []string {
 	if stmt == nil {
 		return nil
@@ -412,7 +557,29 @@ func pipelineNames(stmt *syntax.Stmt, vars map[string]string) []string {
 	if c, ok := stmt.Cmd.(*syntax.BinaryCmd); ok && (c.Op == syntax.Pipe || c.Op == syntax.PipeAll) {
 		return append(pipelineNames(c.X, vars), pipelineNames(c.Y, vars)...)
 	}
-	return []string{leadingName(stmt, vars)}
+	return sinkNames(stmt, vars)
+}
+
+// shellReadsRedirectedCode reports whether stmt is a shell interpreter reading
+// its program from a here-string/here-doc redirect (`bash <<< "…"`, `sh <<EOF`).
+// The shell executes that body as code, so it must be treated as obfuscation —
+// the equivalent of a decoder piped into a shell, but via a redirect.
+func shellReadsRedirectedCode(stmt *syntax.Stmt, vars map[string]string) bool {
+	call, ok := stmt.Cmd.(*syntax.CallExpr)
+	if !ok || len(call.Args) == 0 {
+		return false
+	}
+	name, ok := resolveWord(call.Args[0], vars)
+	if !ok || !shells[name] {
+		return false
+	}
+	for _, r := range stmt.Redirs {
+		switch r.Op {
+		case syntax.Hdoc, syntax.DashHdoc, syntax.WordHdoc:
+			return true
+		}
+	}
+	return false
 }
 
 // decoderIntoShell reports whether a decoder stage is followed by a shell stage.

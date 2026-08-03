@@ -140,6 +140,19 @@ func TestRunUninstallPurgeRemovesArgus(t *testing.T) {
 	}
 }
 
+// A stray positional argument must be rejected (rc=2), not silently swallowed
+// into a full uninstall.
+func TestRunUninstallRejectsUnexpectedArg(t *testing.T) {
+	home := t.TempDir()
+	var w bytes.Buffer
+	if code := RunUninstall([]string{"garbage"}, home, &w); code != 2 {
+		t.Fatalf("RunUninstall with a stray arg = %d, want 2; out=%s", code, w.String())
+	}
+	if !strings.Contains(w.String(), "unexpected argument") {
+		t.Errorf("expected an unexpected-argument message, got %s", w.String())
+	}
+}
+
 func TestUnwireUnknownHarnessErrors(t *testing.T) {
 	if _, err := Unwire("bogus", t.TempDir()); err == nil {
 		t.Error("Unwire(unknown harness) must error")

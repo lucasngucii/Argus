@@ -2,10 +2,12 @@ package policy
 
 // leadBoundary anchors a self-protect/credential Raw pattern's start so it
 // fires on a real path segment — start of subject, after a path separator,
-// or after a shell word boundary (whitespace/`;`/`&`/`|`/`(`/quote) — never
-// mid-word. Without it, `(^|/)` alone misses a bare relative path like the
-// "bin/argus" in `rm bin/argus`, which is preceded by a space, not `/`.
-const leadBoundary = `(^|[\s;&|("'/])`
+// after a shell word boundary (whitespace/`;`/`&`/`|`/`(`/quote), or after `=`
+// (a `--flag=path` value or a `NAME=path` assignment) — never mid-word. Without
+// it, `(^|/)` alone misses a bare relative path like the "bin/argus" in
+// `rm bin/argus`, which is preceded by a space, not `/`; without `=`,
+// `git config --file=.claude/settings.json` slips past.
+const leadBoundary = `(^|[\s;&|("'/=])`
 
 // trailBoundary closes the segment: either it continues deeper (`/`), or the
 // shell word ends right there — whitespace, `;`, `&`, `|`, `)`, quote, or
@@ -40,6 +42,17 @@ func Baseline() []Rule {
 		{ID: "rm-recursive", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "rm -r directory",
 			Match:             Match{Cmd: []string{"rm"}, Flags: []string{"r"}, TargetScorer: "rm_target"},
 			ContextEscalation: []Escalation{{When: Condition{CWDMatches: "prod"}, To: "high"}}},
+		{ID: "rm-system-critical", Enabled: true, Severity: "medium", Tool: []string{"Bash"},
+			// Deleting a single irreplaceable system file needs no recursion, so
+			// rm-recursive (Flags:r) misses it. Anchored to an ABSOLUTE system path
+			// at the start of an argument so ordinary dev paths never false-positive:
+			// `./bin/x`, `build/lib/x`, `/usr/local/bin/x`, `/etc/nginx/x.conf` all
+			// stay clear; only /boot, the system bin/lib dirs, and the classic
+			// /etc control files match. medium (ask) — an unusual but occasionally
+			// legitimate op, so it must stay downgradable, not a floor.
+			Match: Match{Cmd: []string{"rm", "unlink", "shred", "truncate"},
+				ArgMatches: `(?i)(^|\s)/(boot|bin|sbin|lib|lib64|usr/bin|usr/sbin|usr/lib)/|(^|\s)/etc/(passwd|shadow|gshadow|group|sudoers|fstab|hosts)(\s|$)`},
+			Reason: "deletion of a critical system file"},
 		{ID: "git-danger", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "git force/hard-reset/clean",
 			Match: Match{Cmd: []string{"git"}, TargetScorer: "git_danger"}}, // precise: only --force/reset --hard/clean -f
 		{ID: "sudo", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "sudo",
@@ -122,7 +135,7 @@ func Baseline() []Rule {
 			// The path arm is copied from mcp-fileop-sensitive-path (inlined, not
 			// extracted — the two are the mutating/read halves of one surface).
 			Match: Match{
-				McpTool: `(?i)(^|_)(read|get|fetch|load|open|download|cat|show|view|dump|export|tail|head|print)(_|$)`,
+				McpTool: `(?i)(^|_)(read|get|fetch|load|open|download|cat|show|view|dump|export|tail|head|print|retrieve|slurp|access|pull|contents|grab|stream|scan)(_|$)`,
 				Raw: `(?i)` + leadBoundary + `\.ssh/(id_[A-Za-z0-9_]+|authorized_keys)\b` +
 					`|` + leadBoundary + `\.ssh` + trailBoundary +
 					`|` + leadBoundary + `\.aws/credentials\b` +
@@ -174,7 +187,13 @@ func Floor() []Rule {
 		{ID: "pipe-to-shell", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
 			Match: Match{PipesInto: []string{"sh", "bash", "zsh"}}, Reason: "pipe-to-shell"},
 		{ID: "db-destructive", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
-			Match: Match{ArgMatches: `(?i)\b(drop|truncate)\s+(table|database)\b|\bdelete\s+from\b|\.drop\(\)|deletemany`}, Reason: "DB destructive"},
+			// Anchored to real DB clients (Cmd), not a bare ArgMatches: without the
+			// anchor the pattern ran against EVERY command's args, so a commit message
+			// or an echo that merely mentioned "drop table" / "delete from" was floored
+			// (non-downgradable deny) — a false positive on ordinary work. Now only a
+			// destructive statement passed to an actual client fires.
+			Match: Match{Cmd: []string{"psql", "mysql", "mariadb", "mongosh", "mongo", "clickhouse-client", "sqlite3", "cockroach"},
+				ArgMatches: `(?i)\b(drop|truncate)\s+(table|database)\b|\bdelete\s+from\b|\.drop\(\)|deletemany`}, Reason: "DB destructive"},
 		// LISTING-EXEMPT (classify.isSelfProtectOrCredential): a pure ls/stat
 		// of these paths is `safe`. Content reads (cat/grep/…) of a credential
 		// file stay floored — only the metadata (names, sizes, timestamps) of

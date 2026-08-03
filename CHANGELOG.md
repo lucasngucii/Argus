@@ -1,5 +1,60 @@
 # Changelog
 
+## v0.1.14
+
+Security-hardening release from a 10-agent edge-case audit of v0.1.13. Closes
+two critical and several high-severity classifier fail-opens (most pre-existing,
+not introduced in v0.1.13), plus supporting fixes. No config or CLI changes;
+upgrade in place.
+
+### Security — fail-opens closed
+
+- **Quote/variable-split protected paths are no longer invisible to the floors.**
+  The self-protect and credential floors matched their path regex only against
+  the raw command text, so `cat ~/."ssh"/id_rsa`, `cat ~/.ss''h/id_rsa`, and
+  `s=ssh; cat ~/.$s/id_rsa` all resolved to the real key file yet classified
+  safe — silent credential exfiltration and hook-wiring writes. The floors now
+  also match the resolved argv (command names, args, redirect targets).
+- **ANSI-C `$'...'` quoting is decoded.** `$'\x72\x6d' -rf ~` executed `rm`
+  while Argus saw a benign literal; the escapes are now decoded as the shell
+  does, so the real verb surfaces.
+- **Parameter-expansion modifiers fail closed.** `${!x}`, `${x#p}`, `${x/a/b}`,
+  `${x:o:l}`, `${x,,}` emitted the untransformed value as resolved, hiding a
+  verb the transform produces. Only a plain `$name`/`${name}` resolves now.
+- **A shell reading code from a here-string/here-doc is flagged.**
+  `bash <<< "rm -rf /"` is now treated as obfuscation, like `decoder | sh`.
+- **The pipe-to-shell floor can't be dodged with a wrapper.** `curl … | timeout
+  5 bash` (or `env`/`nice`/`nohup` before the shell) now surfaces the shell as
+  the pipe sink.
+- **A never-run loop body can't mask a later verb.** `X=rm; for f in; do X=ls;
+  done; $X -rf /` leaked the body's assignment; loop bodies now run in a child
+  scope so nothing they assign escapes.
+- **Path-qualified commands match their rules.** `./argus uninstall`,
+  `dist/argus uninstall`, and `/bin/rm …` matched rules by exact command word,
+  so a relative/absolute path dodged them; rules now match the command basename.
+
+### Fixed
+
+- **`argus doctor`'s PATH-shadow probe no longer hangs.** The `argus version`
+  probe was bounded only by a context timeout, which the npm launcher's
+  grandchild process defeated (measured ~30s); it now sets `Cmd.WaitDelay`, and
+  its identity check is tightened.
+- **Uncompilable or misspelled policy rules are rejected at load** instead of
+  silently matching nothing — every rule regex is compiled and the schema
+  rejects unknown fields.
+- **`db-destructive` no longer floors ordinary text.** It is anchored to real DB
+  clients, so a commit message or echo mentioning "drop table" is not denied.
+- **MCP credential reads via more read verbs** (retrieve/slurp/access/pull/…)
+  are caught; a `--flag=path` value no longer hides a protected path from the
+  floors; `argus uninstall` rejects a stray argument.
+
+### Added
+
+- **`rm`/`unlink`/`shred`/`truncate` of a critical system file asks** (`/boot`,
+  the system bin/lib dirs, classic `/etc` control files) — a single-file delete
+  needs no recursion, which the recursive-rm rule missed. Anchored so ordinary
+  dev/ops paths never false-positive.
+
 ## v0.1.13
 
 Adds an uninstall command and fixes a for-loop false positive.

@@ -12,6 +12,35 @@ func TestValidateRejectsBadVersion(t *testing.T) {
 	}
 }
 
+// A rule whose regex fails to compile must be rejected at load, not silently
+// installed as a dead rule that matches nothing.
+func TestValidateRejectsUncompilableRuleRegex(t *testing.T) {
+	for _, field := range []string{"raw", "argMatches", "mcpTool"} {
+		doc := `{"version":1,"rules":[{"id":"bad","tool":["Bash"],"reason":"x","match":{"` + field + `":"("}}]}`
+		if err := Validate([]byte(doc)); err == nil {
+			t.Fatalf("Validate must reject an uncompilable %s regex", field)
+		}
+	}
+	// A valid regex still passes.
+	ok := `{"version":1,"rules":[{"id":"good","tool":["Bash"],"reason":"x","match":{"raw":"rm\\s"}}]}`
+	if err := Validate([]byte(ok)); err != nil {
+		t.Fatalf("Validate(valid regex) = %v, want nil", err)
+	}
+}
+
+// A misspelled rule/match field must be rejected (additionalProperties:false),
+// so a mistyped alwaysHigh/cmd doesn't silently weaken coverage.
+func TestValidateRejectsUnknownField(t *testing.T) {
+	for _, doc := range []string{
+		`{"version":1,"rules":[{"id":"t","tool":["Bash"],"reason":"x","alwaysHi":true,"match":{}}]}`,
+		`{"version":1,"rules":[{"id":"t","tool":["Bash"],"reason":"x","match":{"comand":["rm"]}}]}`,
+	} {
+		if err := Validate([]byte(doc)); err == nil {
+			t.Fatalf("Validate must reject a misspelled field: %s", doc)
+		}
+	}
+}
+
 func TestValidateAcceptsDefault(t *testing.T) {
 	b, err := json.Marshal(Default())
 	if err != nil {
