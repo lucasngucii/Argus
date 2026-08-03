@@ -394,6 +394,23 @@ func TestRmSystemCriticalAsksButNotFalsePositive(t *testing.T) {
 	}
 }
 
+// TestPathQualifiedScorerCommandsStillScore pins that a path-qualified command
+// reaches its TargetScorer: basename matching made the rule fire, but the
+// scorers compared the full name, so `/bin/rm -rf /` scored low (allow). The
+// scorers now compare the basename too.
+func TestPathQualifiedScorerCommandsStillScore(t *testing.T) {
+	pol := policy.Default()
+	if got := Classify(bash("/bin/rm -rf /", "default", "/tmp"), pol).Severity; got != "high" {
+		t.Fatalf("/bin/rm -rf / must score high, got %s", got)
+	}
+	if got := Classify(bash("/usr/bin/rm -rf ~", "default", "/tmp"), pol).Severity; got != "high" {
+		t.Fatalf("/usr/bin/rm -rf ~ must score high, got %s", got)
+	}
+	if got := Classify(bash("/usr/bin/git push --force", "default", "/tmp"), pol).Severity; rank(got) < rank("medium") {
+		t.Fatalf("/usr/bin/git push --force must ask, got %s", got)
+	}
+}
+
 func TestListingExemptionAllowsMetadataReads(t *testing.T) {
 	for _, cmd := range []string{
 		"ls ~/.argus", "ls ~/.claude", "ls ~/.ssh", "stat ~/.aws",

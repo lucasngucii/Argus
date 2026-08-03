@@ -40,7 +40,7 @@ var severityRank = map[string]int{"low": 0, "medium": 1, "high": 2}
 func ScoreRmTarget(f shellast.Facts) string {
 	worst := "low"
 	for _, c := range f.Commands {
-		if c.Name != "rm" {
+		if commandBasename(c.Name) != "rm" {
 			continue
 		}
 		if !c.Resolved {
@@ -159,7 +159,7 @@ func nonFlagArgs(args []string) []string {
 // scores safe: those are the ordinary, recoverable cases.
 func ScoreGitDanger(f shellast.Facts) string {
 	for _, c := range f.Commands {
-		if c.Name != "git" {
+		if commandBasename(c.Name) != "git" {
 			continue
 		}
 		sub, rest := gitSubcommand(c.Args)
