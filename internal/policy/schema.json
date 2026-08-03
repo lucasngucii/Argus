@@ -13,7 +13,8 @@
       "type": "object",
       "properties": {
         "shadow": { "type": "boolean" }
-      }
+      },
+      "additionalProperties": false
     },
     "rules": {
       "type": "array",
@@ -31,6 +32,7 @@
       }
     }
   },
+  "additionalProperties": false,
   "$defs": {
     "rule": {
       "type": "object",
@@ -89,7 +91,8 @@
       "type": "object",
       "properties": {
         "cwdMatches": { "type": "string" }
-      }
+      },
+      "additionalProperties": false
     },
     "escalation": {
       "type": "object",

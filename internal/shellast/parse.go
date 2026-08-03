@@ -51,6 +51,11 @@ const maxLoopBodyWalks = 1024
 var wrappers = map[string]bool{
 	"sudo": true, "env": true, "doas": true, "nohup": true,
 	"nice": true, "time": true, "timeout": true, "xargs": true,
+	// Other common "run this other command" prefixes — each execs its argument
+	// command, so the wrapped verb (and a piped-in shell) must surface through it.
+	"command": true, "setsid": true, "stdbuf": true, "ionice": true,
+	"chrt": true, "taskset": true, "flock": true, "nsenter": true,
+	"unbuffer": true, "caffeinate": true,
 }
 
 // decoders emit bytes that a downstream shell would execute; decoder|shell is a
@@ -219,6 +224,9 @@ func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
 		for _, s := range c.Do {
 			processStmt(s, child, f)
 		}
+		// Iteration count is unknown; assume it runs so a body reassignment is
+		// visible to later commands (over-surfacing if it doesn't is fail-safe).
+		propagateVars(child, vars)
 		return
 	}
 
@@ -249,14 +257,30 @@ func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
 				processStmt(s, child, f)
 			}
 		}
+		// A resolved non-empty list runs at least once, so in a real shell the
+		// body's final assignments (and the loop var = last value) persist.
+		// Propagate them so a later `$X` sees what the loop actually left, not a
+		// stale pre-loop value that could mask a verb (`X=ls; for f in a; do X=rm;
+		// done; $X -rf /`). An EMPTY or unresolved list (below) may run zero times,
+		// so its body assignments must NOT leak — that stays isolated.
+		propagateVars(child, vars)
 		return
 	}
-	// Unresolved (or empty) list: the values are unknown, so walk the body once
-	// with the variable unbound — any reference to it stays unresolved and the
-	// loop is already flagged obfuscated above.
+	// Unresolved (or empty) list: the values are unknown (may run zero times), so
+	// walk the body once with the variable unbound and DO NOT propagate — a body
+	// reference stays unresolved and the unresolved case is already obfuscated.
 	delete(child, name)
 	for _, s := range c.Do {
 		processStmt(s, child, f)
+	}
+}
+
+// propagateVars copies a loop body's child scope back into the parent, so an
+// assignment a loop that runs makes is visible to later resolution. Only called
+// for loops that execute at least once (or a C-style loop, conservatively).
+func propagateVars(child, vars map[string]string) {
+	for k, v := range child {
+		vars[k] = v
 	}
 }
 
@@ -357,12 +381,24 @@ func hasCmdSubst(node syntax.Node) bool {
 }
 
 func resolveParts(parts []syntax.WordPart, vars map[string]string) (string, bool) {
+	return resolvePartsCtx(parts, vars, false)
+}
+
+// resolvePartsCtx resolves a word's parts. quoted is true when these parts sit
+// inside double quotes, where a backslash is (mostly) literal; in the unquoted
+// context a backslash escapes the next character (`.s\sh` → `.ssh`), so it must
+// be stripped or an escaped protected path would slip every floor.
+func resolvePartsCtx(parts []syntax.WordPart, vars map[string]string, quoted bool) (string, bool) {
 	var b strings.Builder
 	resolved := true
 	for _, p := range parts {
 		switch pp := p.(type) {
 		case *syntax.Lit:
-			b.WriteString(pp.Value)
+			if quoted {
+				b.WriteString(pp.Value)
+			} else {
+				b.WriteString(stripUnquotedBackslashes(pp.Value))
+			}
 		case *syntax.SglQuoted:
 			if pp.Dollar {
 				// ANSI-C $'...': the shell decodes \xNN, \NNN, \uNNNN, \n, … before
@@ -373,22 +409,15 @@ func resolveParts(parts []syntax.WordPart, vars map[string]string) (string, bool
 				b.WriteString(pp.Value)
 			}
 		case *syntax.DblQuoted:
-			text, ok := resolveParts(pp.Parts, vars)
+			text, ok := resolvePartsCtx(pp.Parts, vars, true)
 			b.WriteString(text)
 			if !ok {
 				resolved = false
 			}
 		case *syntax.ParamExp:
-			// Only a PLAIN $name / ${name} is statically resolvable. Any modifier —
-			// ${!x} indirect, ${x#p}/${x%s}/${x:-y}, ${x/a/b}, ${x:o:l}, ${x,,},
-			// ${#x}, ${x[i]} — transforms the value, so emitting the untransformed
-			// lookup would read a benign stored string where the shell produces a
-			// dangerous one. Treat every non-plain form as unresolved (fail closed).
-			if isPlainParam(pp) {
-				if v, ok := vars[pp.Param.Value]; ok {
-					b.WriteString(v)
-					continue
-				}
+			if v, ok := resolveParamExp(pp, vars); ok {
+				b.WriteString(v)
+				continue
 			}
 			resolved = false
 		default:
@@ -397,6 +426,65 @@ func resolveParts(parts []syntax.WordPart, vars map[string]string) (string, bool
 		}
 	}
 	return b.String(), resolved
+}
+
+// stripUnquotedBackslashes removes an unquoted backslash and keeps the next
+// character literally, as the shell does (`.s\sh` → `.ssh`, `a\ b` → `a b`). A
+// trailing backslash is kept. Without this, a backslash-escaped protected path
+// resolves with the backslash still in it and no floor matches.
+func stripUnquotedBackslashes(s string) string {
+	if !strings.ContainsRune(s, '\\') {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+// resolveParamExp resolves a parameter expansion to its literal value when that
+// value is statically knowable. A plain $name/${name} resolves from vars. A
+// SELECT-style expansion whose base variable IS known — ${x:-w}/${x:=w}/${x:?}
+// (value is the known var) or ${x:+w} (value is the literal word) — also
+// resolves, so benign default-value idioms don't read as obfuscation while a
+// literal dangerous word stays visible. Every TRANSFORMING form (strip #/%,
+// replace /, slice :o:l, case ,,/^^, indirect !, length #, index) stays
+// unresolved: it can synthesize a verb from the variable's own bytes, which is
+// the evasion this guards. A select form on an UNKNOWN base var also stays
+// unresolved — guessing the unset branch could hide an env-provided value.
+func resolveParamExp(pp *syntax.ParamExp, vars map[string]string) (string, bool) {
+	if pp.Param == nil {
+		return "", false
+	}
+	if isPlainParam(pp) {
+		v, ok := vars[pp.Param.Value]
+		return v, ok
+	}
+	// A select-style expansion carries only an Exp op and nothing else.
+	if pp.Exp == nil || pp.Excl || pp.Length || pp.Width || pp.IsSet ||
+		pp.NestedParam != nil || pp.Index != nil || len(pp.Modifiers) != 0 ||
+		pp.Slice != nil || pp.Repl != nil || pp.Names != 0 || pp.Flags != nil {
+		return "", false
+	}
+	val, set := vars[pp.Param.Value]
+	if !set {
+		return "", false // unknown base var: the branch taken isn't statically known
+	}
+	switch pp.Exp.Op {
+	case syntax.DefaultUnset, syntax.DefaultUnsetOrNull,
+		syntax.AssignUnset, syntax.AssignUnsetOrNull,
+		syntax.ErrorUnset, syntax.ErrorUnsetOrNull:
+		return val, true // base var is set → its value
+	case syntax.AlternateUnset, syntax.AlternateUnsetOrNull:
+		return resolveWord(pp.Exp.Word, vars) // base var is set → the word
+	default:
+		return "", false // strip/replace/etc. — can synthesize a verb
+	}
 }
 
 // isPlainParam reports whether a parameter expansion is a bare $name / ${name}
@@ -514,14 +602,15 @@ func cloneVars(vars map[string]string) map[string]string {
 }
 
 // sinkNames returns the command names a single (non-pipe) stage runs: the
-// leading command, plus — when that command is a prefix wrapper (sudo/env/
-// timeout/nice/…) — EVERY non-flag, non-assignment token after it as a candidate
-// wrapped command. A wrapper's command position varies (`timeout 5 bash`,
-// `nice -n 10 bash`), so picking one token could miss the real interpreter;
-// over-emitting a harmless phantom (`5`) is the safe direction. This is why
-// `… | timeout 5 bash` still surfaces `bash`, so the pipe-to-shell floor and
-// decoder-into-shell can't be dodged by inserting a wrapper before the shell.
-// It never mutates Facts. (Same over-emit rationale as emitInner.)
+// leading command, and — when that command is a prefix wrapper (sudo/env/
+// timeout/nice/…) — the ONE command it wraps, unwrapped one level at a time.
+// Unlike emitInner (which over-emits every token, fail-safe for SCORING), this
+// feeds the AlwaysHigh pipe-to-shell floor, so it must pick the actual wrapped
+// interpreter precisely: over-emitting would hard-deny a benign `… | xargs grep
+// bash`. The wrapped command is the first argument that is not a flag, a
+// NAME=VALUE assignment, or a bare number (a wrapper's duration/nice value), so
+// `timeout 5 bash` and `nice -n 10 bash` both resolve to `bash`. It never
+// mutates Facts.
 func sinkNames(stmt *syntax.Stmt, vars map[string]string) []string {
 	if stmt == nil {
 		return nil
@@ -535,16 +624,46 @@ func sinkNames(stmt *syntax.Stmt, vars map[string]string) []string {
 		return nil
 	}
 	out := []string{name}
-	if wrappers[name] {
-		for _, w := range call.Args[1:] {
-			text, ok := resolveWord(w, vars)
-			if !ok || strings.HasPrefix(text, "-") || assignToken.MatchString(text) {
-				continue // a wrapper option or NAME=VALUE, not the wrapped command
-			}
-			out = append(out, text)
+	args := call.Args[1:]
+	for wrappers[name] {
+		wrapped, rest, found := firstCommandToken(args, vars)
+		if !found {
+			break
 		}
+		out = append(out, wrapped)
+		name, args = wrapped, rest
 	}
 	return out
+}
+
+// firstCommandToken returns the first argument that reads as the wrapped command
+// — skipping option flags, NAME=VALUE assignments, and bare numbers (a wrapper's
+// duration/priority value) — with the arguments that follow it. An unresolved
+// token stops the scan (the wrapped command can't be pinned).
+func firstCommandToken(args []*syntax.Word, vars map[string]string) (string, []*syntax.Word, bool) {
+	for j, w := range args {
+		text, ok := resolveWord(w, vars)
+		if !ok {
+			return "", nil, false
+		}
+		if strings.HasPrefix(text, "-") || assignToken.MatchString(text) || isAllDigits(text) {
+			continue
+		}
+		return text, args[j+1:], true
+	}
+	return "", nil, false
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // pipelineNames returns the command names of every stage in a pipe chain, in
@@ -565,12 +684,14 @@ func pipelineNames(stmt *syntax.Stmt, vars map[string]string) []string {
 // The shell executes that body as code, so it must be treated as obfuscation —
 // the equivalent of a decoder piped into a shell, but via a redirect.
 func shellReadsRedirectedCode(stmt *syntax.Stmt, vars map[string]string) bool {
-	call, ok := stmt.Cmd.(*syntax.CallExpr)
-	if !ok || len(call.Args) == 0 {
-		return false
+	isShell := false
+	for _, n := range sinkNames(stmt, vars) { // unwrap wrappers (`timeout 5 bash <<<…`)
+		if shells[n] {
+			isShell = true
+			break
+		}
 	}
-	name, ok := resolveWord(call.Args[0], vars)
-	if !ok || !shells[name] {
+	if !isShell {
 		return false
 	}
 	for _, r := range stmt.Redirs {

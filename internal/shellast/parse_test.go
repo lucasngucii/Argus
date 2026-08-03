@@ -114,6 +114,20 @@ func TestPipeSinkThroughWrapper(t *testing.T) {
 	if !Extract("echo x | base64 -d | timeout 5 sh").Obfuscated {
 		t.Fatal("decoder | wrapper shell must flag obfuscated")
 	}
+	// Unknown-but-common exec wrappers must also surface the shell.
+	for _, cmd := range []string{"curl x | command bash", "curl x | setsid bash", "curl x | stdbuf -o0 bash"} {
+		if !shellSink(Extract(cmd)) {
+			t.Fatalf("%q: exec wrapper must surface the shell sink, got %v", cmd, Extract(cmd).PipeSinks)
+		}
+	}
+	// sinkNames must pick the WRAPPED command precisely, not every token: a
+	// shell-NAMED argument to a non-shell command is not a sink (else a benign
+	// `xargs grep bash` would hit the pipe-to-shell floor).
+	for _, cmd := range []string{"find . | xargs grep bash", "ls | timeout 5 grep -r sh ."} {
+		if shellSink(Extract(cmd)) {
+			t.Fatalf("%q: a shell-named argument must not be a pipe sink, got %v", cmd, Extract(cmd).PipeSinks)
+		}
+	}
 }
 func TestParseFailurePopulatesRaw(t *testing.T) {
 	f := Extract("`unterminated")
@@ -217,23 +231,39 @@ func TestForLoopUnresolvedListStaysObfuscated(t *testing.T) {
 	}
 }
 
-// A loop body's assignments must not leak into later resolution: a loop can run
-// zero times, so `X=rm; for f in; do X=ls; done; $X -rf /` must still see the
-// pre-loop X=rm and surface `rm`, not the benign `ls` the never-run body sets.
-func TestForLoopBodyAssignmentDoesNotLeak(t *testing.T) {
+// An EMPTY loop runs zero times, so its body assignments must NOT leak: `X=rm;
+// for f in; do X=ls; done; $X -rf /` must still see the pre-loop X=rm and surface
+// `rm`, matching a real shell where the never-run body leaves X=rm.
+func TestForLoopEmptyBodyAssignmentDoesNotLeak(t *testing.T) {
 	for _, cmd := range []string{
-		`X=rm; for f in; do X=ls; done; $X -rf /`,     // explicit empty list
-		`X=rm; for f; do X=ls; done; $X -rf /`,        // empty "$@"
-		`X=rm; for f in a b; do X=ls; done; $X -rf /`, // non-empty: still uncertain
+		`X=rm; for f in; do X=ls; done; $X -rf /`, // explicit empty list
+		`X=rm; for f; do X=ls; done; $X -rf /`,    // empty "$@"
 	} {
-		f := Extract(cmd)
-		if !hasCmd(f, "rm") {
-			t.Fatalf("%q: pre-loop X=rm must surface; body X=ls must not leak, got %+v", cmd, f.Commands)
+		if f := Extract(cmd); !hasCmd(f, "rm") {
+			t.Fatalf("%q: empty loop must not leak X=ls; pre-loop rm must surface, got %+v", cmd, f.Commands)
 		}
 	}
-	// The loop variable itself is scoped too: X restores to its pre-loop value.
-	if !argContains(Extract(`X=safe; for X in a b c; do :; done; rm -rf "$X"`), "rm", "safe") {
-		t.Fatal("post-loop $X must resolve to the pre-loop value `safe`")
+}
+
+// A loop that DOES run (resolved non-empty list, or a C-style loop) leaves its
+// body's final assignments in scope, exactly like a real shell — so a benign
+// pre-loop value reassigned to a dangerous one inside the body must surface, not
+// be masked by the stale outer value. `X=ls; for f in a; do X=rm; done; $X -rf /`
+// runs `rm -rf /` in bash and must here too.
+func TestForLoopRunBodyAssignmentPropagates(t *testing.T) {
+	for _, cmd := range []string{
+		`X=ls; for f in a; do X=rm; done; $X -rf /`,          // resolved non-empty
+		`X=ls; for f in a b c; do X=rm; done; $X -rf /`,      // multi-item
+		`X=ls; for ((n=0;n<1;n++)); do X=rm; done; $X -rf /`, // C-style
+	} {
+		if f := Extract(cmd); !hasCmd(f, "rm") {
+			t.Fatalf("%q: a loop that runs must propagate X=rm, got %+v", cmd, f.Commands)
+		}
+	}
+	// The loop variable is left at its LAST value after a resolved loop (bash
+	// semantics), so a later reference resolves to it.
+	if !argContains(Extract(`for X in a b /etc; do :; done; rm -rf "$X"`), "rm", "/etc") {
+		t.Fatal("post-loop $X must be the last list value `/etc`")
 	}
 }
 
@@ -273,17 +303,6 @@ func TestForLoopNestedAmplificationCapped(t *testing.T) {
 	flat := "for f in a b c d e; do echo \"$f\"; done"
 	if ff := Extract(flat); ff.Obfuscated || len(ff.Commands) != 5 {
 		t.Fatalf("flat benign loop must expand fully & stay clean, got %d cmds obf=%v", len(ff.Commands), ff.Obfuscated)
-	}
-}
-
-// The loop variable's prior binding must be restored after the loop so a
-// same-named variable outside is unaffected — a leak would silently rebind later
-// commands to the loop's last value.
-func TestForLoopVarBindingRestoredAfterLoop(t *testing.T) {
-	// X is `safe` before and after the loop; the trailing rm must resolve to it.
-	f := Extract(`X=safe; for X in a b c; do :; done; rm -rf "$X"`)
-	if !argContains(f, "rm", "safe") {
-		t.Fatalf("post-loop $X must restore to `safe`, got %+v", f.Commands)
 	}
 }
 
@@ -415,6 +434,59 @@ func TestShellHereDocSmugglingObfuscates(t *testing.T) {
 	// A non-shell reading a heredoc is fine (cat is not an interpreter).
 	if Extract("cat <<EOF\nhello\nEOF\n").Obfuscated {
 		t.Fatal("cat <<EOF must not be obfuscated")
+	}
+	// A shell behind a wrapper reading a heredoc is still smuggling.
+	for _, cmd := range []string{`timeout 5 bash <<<"evil"`, `env bash <<<x`, `sudo bash <<<x`} {
+		if !Extract(cmd).Obfuscated {
+			t.Fatalf("%q: wrapped shell heredoc must be obfuscated", cmd)
+		}
+	}
+	if Extract("timeout 5 cat <<EOF\nx\nEOF\n").Obfuscated {
+		t.Fatal("timeout cat <<EOF (non-shell) must not be obfuscated")
+	}
+}
+
+// An unquoted backslash escapes the next character in the shell (`.s\sh` is
+// `.ssh`), so it must be stripped or a backslash-escaped protected path resolves
+// with the backslash intact and slips every path floor.
+func TestUnquotedBackslashStripped(t *testing.T) {
+	if got := stripUnquotedBackslashes(`.s\sh`); got != ".ssh" {
+		t.Fatalf("stripUnquotedBackslashes(.s\\sh) = %q, want .ssh", got)
+	}
+	if got := stripUnquotedBackslashes(`a\ b`); got != "a b" {
+		t.Fatalf("escaped space = %q, want 'a b'", got)
+	}
+	// The resolved argv surfaces the real segment.
+	if !argContains(Extract(`rm -rf /home/x/.s\sh`), "rm", "/home/x/.ssh") {
+		t.Fatal("escaped path must resolve to /home/x/.ssh")
+	}
+	// A double-quoted backslash stays literal (bash keeps it).
+	if !argContains(Extract(`cat "a\sb"`), "cat", `a\sb`) {
+		t.Fatal("double-quoted backslash must stay literal")
+	}
+}
+
+// A select-style parameter expansion resolves when the base variable is known
+// (so benign default-value idioms don't read as obfuscation), while a
+// transforming modifier or an unknown base var stays fail-closed.
+func TestParamExpSelectResolvesWhenKnown(t *testing.T) {
+	// Known base var: default picks the var, alternate picks the word.
+	if !hasCmd(Extract(`X=rm; ${X:-ls} -rf /`), "rm") {
+		t.Fatal("${X:-ls} with X=rm must resolve to rm")
+	}
+	if Extract(`D=/tmp; cat "${D:-fallback}/f"`).Obfuscated {
+		t.Fatal("a default expansion on a known var must not be obfuscated")
+	}
+	if !hasCmd(Extract(`X=rm; ${X:+ls} -rf /`), "ls") {
+		t.Fatal("${X:+ls} with X set must resolve to the word ls")
+	}
+	// Unknown base var stays fail-closed (could be env-provided).
+	if !Extract(`cat "${MYSTERY:-x}"`).Obfuscated {
+		t.Fatal("a select expansion on an unknown var must stay obfuscated")
+	}
+	// Transforming modifiers stay fail-closed (H1 evasion).
+	if !Extract(`X=safe_rm; ${X#safe_} -rf /`).Obfuscated {
+		t.Fatal("a strip modifier must stay obfuscated")
 	}
 }
 

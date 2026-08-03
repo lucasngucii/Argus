@@ -155,20 +155,16 @@ func resolvedSubject(f shellast.Facts) string {
 	if len(f.Commands) == 0 && len(f.Redirects) == 0 {
 		return ""
 	}
-	var b strings.Builder
+	// Separate each command and redirect with " ; ". A path floor scans for a
+	// segment and doesn't care, but a structural rule whose regex is anchored to
+	// NOT cross a `;`/`|`/`&` (opaque-exec: `bash\s+[^-|;&]+\.sh`) would otherwise
+	// falsely match across two flattened statements (`bash ; cat deploy.sh`).
+	parts := make([]string, 0, len(f.Commands)+len(f.Redirects))
 	for _, c := range f.Commands {
-		b.WriteString(c.Name)
-		b.WriteByte(' ')
-		for _, a := range c.Args {
-			b.WriteString(a)
-			b.WriteByte(' ')
-		}
+		parts = append(parts, c.Name+" "+strings.Join(c.Args, " "))
 	}
-	for _, r := range f.Redirects {
-		b.WriteString(r)
-		b.WriteByte(' ')
-	}
-	return b.String()
+	parts = append(parts, f.Redirects...)
+	return strings.Join(parts, " ; ")
 }
 
 // hasAllFlags reports whether every required flag letter appears among cmds'

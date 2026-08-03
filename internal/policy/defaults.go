@@ -51,7 +51,7 @@ func Baseline() []Rule {
 			// /etc control files match. medium (ask) — an unusual but occasionally
 			// legitimate op, so it must stay downgradable, not a floor.
 			Match: Match{Cmd: []string{"rm", "unlink", "shred", "truncate"},
-				ArgMatches: `(?i)(^|\s)/(boot|bin|sbin|lib|lib64|usr/bin|usr/sbin|usr/lib)/|(^|\s)/etc/(passwd|shadow|gshadow|group|sudoers|fstab|hosts)(\s|$)`},
+				ArgMatches: `(?i)(^|\s)/(boot|bin|sbin|lib|lib64|usr/bin|usr/sbin|usr/lib|usr/lib64)/|(^|\s)/(boot|bin|sbin|lib|lib64)(\s|$)|(^|\s)/etc/(passwd|shadow|gshadow|group|sudoers|fstab|hosts)(\s|$)`},
 			Reason: "deletion of a critical system file"},
 		{ID: "git-danger", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "git force/hard-reset/clean",
 			Match: Match{Cmd: []string{"git"}, TargetScorer: "git_danger"}}, // precise: only --force/reset --hard/clean -f
@@ -185,15 +185,17 @@ func Floor() []Rule {
 		{ID: "forkbomb", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
 			Match: Match{Raw: `:\(\)\s*\{`}, Reason: "forkbomb"},
 		{ID: "pipe-to-shell", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
-			Match: Match{PipesInto: []string{"sh", "bash", "zsh"}}, Reason: "pipe-to-shell"},
+			Match: Match{PipesInto: []string{"sh", "bash", "zsh", "dash", "ksh", "fish"}}, Reason: "pipe-to-shell"},
 		{ID: "db-destructive", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
-			// Anchored to real DB clients (Cmd), not a bare ArgMatches: without the
-			// anchor the pattern ran against EVERY command's args, so a commit message
-			// or an echo that merely mentioned "drop table" / "delete from" was floored
-			// (non-downgradable deny) — a false positive on ordinary work. Now only a
-			// destructive statement passed to an actual client fires.
-			Match: Match{Cmd: []string{"psql", "mysql", "mariadb", "mongosh", "mongo", "clickhouse-client", "sqlite3", "cockroach"},
-				ArgMatches: `(?i)\b(drop|truncate)\s+(table|database)\b|\bdelete\s+from\b|\.drop\(\)|deletemany`}, Reason: "DB destructive"},
+			// Cmd (a real DB client is present) AND Raw (the destructive statement
+			// appears anywhere in the command). Gating on the client's presence, not
+			// on it being the command whose args carry the SQL, keeps the false-
+			// positive fix (a commit message / echo mentioning "drop table" has no
+			// client → no match) while also catching the statement fed to the client
+			// via a pipe or wrapper (`echo "drop table x" | psql`), which an
+			// ArgMatches-against-the-client's-own-args form missed.
+			Match: Match{Cmd: []string{"psql", "mysql", "mariadb", "mongosh", "mongo", "clickhouse-client", "sqlite3", "cockroach", "duckdb"},
+				Raw: `(?i)\b(drop|truncate)\s+(table|database)\b|\bdelete\s+from\b|\.drop\(\)|deletemany`}, Reason: "DB destructive"},
 		// LISTING-EXEMPT (classify.isSelfProtectOrCredential): a pure ls/stat
 		// of these paths is `safe`. Content reads (cat/grep/…) of a credential
 		// file stay floored — only the metadata (names, sizes, timestamps) of
@@ -210,7 +212,10 @@ func Floor() []Rule {
 				`|` + leadBoundary + `\.ssh` + trailBoundary +
 				`|` + leadBoundary + `\.aws/credentials\b` +
 				`|` + leadBoundary + `\.aws` + trailBoundary +
-				`|>\s*/etc/|/etc/sudoers\b`},
+				// /etc: a redirect into any /etc file, PLUS the secret/critical control
+				// files verb-agnostically (a read of /etc/shadow's hashes, or a
+				// non-redirect write via tee/cp/mv/chmod, is as dangerous as a redirect).
+				`|>\s*/etc/|/etc/(sudoers|shadow|gshadow)\b`},
 			Reason: "credential file or system-config write"},
 		{ID: "mcp-fileop-sensitive-path", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"mcp"},
 			// A FILE-OP-named MCP tool whose args target a credential/system/self-protect

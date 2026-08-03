@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.1.15
+
+Second edge-case audit (another 10-agent pass over the v0.1.14 artifact). Closes
+further fail-opens — including two regressions introduced by v0.1.14's own fixes
+— and a batch of false-positives. Upgrade in place.
+
+### Security — fail-opens closed
+
+- **A backslash-escaped protected path no longer slips the floors.**
+  `cat ~/.s\sh/id_rsa` reads the same file as `~/.ssh/id_rsa` in a shell but
+  kept the backslash and classified safe. Unquoted backslashes are now stripped
+  as the shell does before matching.
+- **A system secret file is floored for every verb.** The credential floor
+  guarded the system-config dir only via a redirect shape plus one control
+  file, so a content read of the password-hash file — or a non-redirect write
+  (tee/cp/mv/chmod) — reached safe. The secret/critical control files now floor
+  for any verb.
+- **Path-qualified `rm`/`git` are scored (regression from v0.1.14).** v0.1.14
+  made rule matching basename-aware but left the target scorers comparing the
+  full name, so `/bin/rm -rf /` matched the rule yet scored low and was
+  ALLOWED. The scorers now compare the basename.
+- **A loop that runs propagates its assignments (regression from v0.1.14).**
+  v0.1.14 stopped an empty loop leaking, but by never propagating it also
+  masked `X=ls; for f in a; do X=rm; done; $X -rf /` (which runs `rm -rf /`).
+  Propagation is now asymmetric: a loop that runs propagates, an empty/unknown
+  one stays isolated.
+- **A here-doc into a shell behind a wrapper is caught**, and more exec wrappers
+  (`command`, `setsid`, `stdbuf`, …) are recognized, so `curl … | command bash`
+  and `timeout 5 bash <<<…` no longer slip the pipe-to-shell floor; it also now
+  covers `dash`/`ksh`/`fish`.
+- **Piped destructive SQL is caught.** `echo "drop table x" | psql` reached
+  safe; db-destructive now gates on the client's presence and matches the
+  statement anywhere in the command.
+
+### Fixed — false positives
+
+- **A benign `xargs grep bash` is no longer hard-denied.** The pipe-sink
+  unwrapper over-emitted every token; it now picks the wrapped command
+  precisely.
+- **Common `${VAR:-default}` idioms stop asking.** A select-style parameter
+  expansion on a known variable now resolves instead of reading as obfuscation;
+  transforming modifiers still fail closed.
+- **`bash; cat deploy.sh` is not opaque-exec.** The resolved-argv view separates
+  statements so a separator-anchored rule can't match across them.
+- **Misspelled top-level policy keys are rejected.** `override` (vs overrides),
+  `shdow`, and a mistyped condition field were silently ignored while doctor
+  passed; the document, defaults, and condition objects now reject unknown keys.
+
 ## v0.1.14
 
 Security-hardening release from a 10-agent edge-case audit of v0.1.13. Closes

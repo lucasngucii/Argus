@@ -312,11 +312,28 @@ func TestResolvedPathFloorsBeatQuoteAndVarSplit(t *testing.T) {
 			t.Fatalf("%q must floor high via resolved argv, got %s", cmd, got)
 		}
 	}
+	// A backslash-escaped protected segment (`.s\sh` = `.ssh`) must also floor.
+	for _, cmd := range []string{`cat ~/.s\sh/id_rsa`, `cat ~/.cla\ude/settings.json`} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; got != "high" {
+			t.Fatalf("%q (backslash-escaped) must floor high, got %s", cmd, got)
+		}
+	}
 	// The resolved view must NOT over-match a benign path that merely resolves.
 	for _, cmd := range []string{`ls ~/.ssh_backup`, `cat ~/.claude/projects/x/memory/f.md`} {
 		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; got == "high" {
 			t.Fatalf("false positive: %q resolved to high", cmd)
 		}
+	}
+	// The resolved-argv view must not make a structural rule cross a statement
+	// boundary: `bash; cat deploy.sh` is two benign statements, not opaque-exec.
+	for _, cmd := range []string{`bash; cat deploy.sh`, `sh; echo build.sh`} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; rank(got) >= rank("medium") {
+			t.Fatalf("opaque-exec false positive across `;`: %q -> %s", cmd, got)
+		}
+	}
+	// A genuine opaque exec still asks.
+	if got := Classify(bash("bash deploy.sh", "default", "/tmp"), pol).Severity; rank(got) < rank("medium") {
+		t.Fatalf("real `bash deploy.sh` must still ask, got %s", got)
 	}
 }
 
@@ -335,13 +352,51 @@ func TestDbDestructiveAnchoredToClients(t *testing.T) {
 			t.Fatalf("false positive: %q floored high", cmd)
 		}
 	}
-	// Must still floor: a destructive statement to an actual client.
+	// Must still floor: a destructive statement to an actual client, including
+	// one fed via a pipe (the SQL is not the client's own arg).
 	for _, cmd := range []string{
 		`psql -c "drop table users"`,
 		`mysql -e "delete from sessions"`,
+		`echo "drop table users" | psql`,
+		`duckdb -c "delete from t"`,
 	} {
 		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; got != "high" {
 			t.Fatalf("%q must floor high, got %s", cmd, got)
+		}
+	}
+}
+
+// TestEtcShadowFlooredForEveryVerb pins the fix for the audit's critical /etc
+// gap: /etc/shadow (password hashes) and /etc/sudoers must floor high for a
+// CONTENT read and any write, not only a shell redirect.
+func TestEtcShadowFlooredForEveryVerb(t *testing.T) {
+	pol := policy.Default()
+	for _, cmd := range []string{
+		"cat /etc/shadow", "grep root /etc/shadow", "cp /etc/shadow /tmp/x",
+		"tee /etc/shadow", "chmod 777 /etc/shadow", "cp evil /etc/gshadow",
+	} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; got != "high" {
+			t.Fatalf("%q must floor high, got %s", cmd, got)
+		}
+	}
+	// A pure metadata listing stays exempt (names/sizes are not the secret).
+	if got := Classify(bash("stat /etc/shadow", "default", "/tmp"), pol).Severity; got == "high" {
+		t.Fatalf("stat /etc/shadow (metadata) should be exempt, got %s", got)
+	}
+}
+
+// TestRmSystemCriticalExtendedCoverage pins the widened coverage: /usr/lib64 and
+// bare top-level dirs, still without dev-path false positives.
+func TestRmSystemCriticalExtendedCoverage(t *testing.T) {
+	pol := policy.Default()
+	for _, cmd := range []string{"rm /usr/lib64/x.so", "rm /boot", "rm /bin", "unlink /lib64"} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; rank(got) < rank("medium") {
+			t.Fatalf("%q must ask, got %s", cmd, got)
+		}
+	}
+	for _, cmd := range []string{"rm /usr/local/lib64/x", "rm ./boot", "rm mybin"} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; rank(got) >= rank("medium") {
+			t.Fatalf("false positive: %q -> %s", cmd, got)
 		}
 	}
 }
@@ -391,6 +446,23 @@ func TestRmSystemCriticalAsksButNotFalsePositive(t *testing.T) {
 		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; rank(got) >= rank("medium") {
 			t.Fatalf("false positive: %q classified %s", cmd, got)
 		}
+	}
+}
+
+// TestPathQualifiedScorerCommandsStillScore pins that a path-qualified command
+// reaches its TargetScorer: basename matching made the rule fire, but the
+// scorers compared the full name, so `/bin/rm -rf /` scored low (allow). The
+// scorers now compare the basename too.
+func TestPathQualifiedScorerCommandsStillScore(t *testing.T) {
+	pol := policy.Default()
+	if got := Classify(bash("/bin/rm -rf /", "default", "/tmp"), pol).Severity; got != "high" {
+		t.Fatalf("/bin/rm -rf / must score high, got %s", got)
+	}
+	if got := Classify(bash("/usr/bin/rm -rf ~", "default", "/tmp"), pol).Severity; got != "high" {
+		t.Fatalf("/usr/bin/rm -rf ~ must score high, got %s", got)
+	}
+	if got := Classify(bash("/usr/bin/git push --force", "default", "/tmp"), pol).Severity; rank(got) < rank("medium") {
+		t.Fatalf("/usr/bin/git push --force must ask, got %s", got)
 	}
 }
 
