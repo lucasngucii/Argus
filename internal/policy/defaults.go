@@ -42,6 +42,17 @@ func Baseline() []Rule {
 		{ID: "rm-recursive", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "rm -r directory",
 			Match:             Match{Cmd: []string{"rm"}, Flags: []string{"r"}, TargetScorer: "rm_target"},
 			ContextEscalation: []Escalation{{When: Condition{CWDMatches: "prod"}, To: "high"}}},
+		{ID: "rm-system-critical", Enabled: true, Severity: "medium", Tool: []string{"Bash"},
+			// Deleting a single irreplaceable system file needs no recursion, so
+			// rm-recursive (Flags:r) misses it. Anchored to an ABSOLUTE system path
+			// at the start of an argument so ordinary dev paths never false-positive:
+			// `./bin/x`, `build/lib/x`, `/usr/local/bin/x`, `/etc/nginx/x.conf` all
+			// stay clear; only /boot, the system bin/lib dirs, and the classic
+			// /etc control files match. medium (ask) — an unusual but occasionally
+			// legitimate op, so it must stay downgradable, not a floor.
+			Match: Match{Cmd: []string{"rm", "unlink", "shred", "truncate"},
+				ArgMatches: `(?i)(^|\s)/(boot|bin|sbin|lib|lib64|usr/bin|usr/sbin|usr/lib)/|(^|\s)/etc/(passwd|shadow|gshadow|group|sudoers|fstab|hosts)(\s|$)`},
+			Reason: "deletion of a critical system file"},
 		{ID: "git-danger", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "git force/hard-reset/clean",
 			Match: Match{Cmd: []string{"git"}, TargetScorer: "git_danger"}}, // precise: only --force/reset --hard/clean -f
 		{ID: "sudo", Enabled: true, Severity: "medium", Tool: []string{"Bash"}, Reason: "sudo",

@@ -370,6 +370,30 @@ func TestMCPReadVerbSynonymsCatchCredentialReads(t *testing.T) {
 	}
 }
 
+// TestRmSystemCriticalAsksButNotFalsePositive pins the rm-system-critical rule:
+// deleting an irreplaceable system file (no recursion needed, so rm-recursive
+// misses it) asks, while ordinary dev/ops paths that merely contain bin/lib/etc
+// segments stay clear.
+func TestRmSystemCriticalAsksButNotFalsePositive(t *testing.T) {
+	pol := policy.Default()
+	for _, cmd := range []string{
+		"rm /boot/vmlinuz", "rm /bin/sh", "unlink /sbin/init",
+		"rm /usr/bin/python3", "shred /etc/fstab",
+	} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; rank(got) < rank("medium") {
+			t.Fatalf("%q must ask (>= medium), got %s", cmd, got)
+		}
+	}
+	for _, cmd := range []string{
+		"rm ./bin/tool", "rm build/lib/x.so", "rm /usr/local/bin/mytool",
+		"rm /etc/nginx/nginx.conf", "rm /home/u/bin/x", "rm dist/argus-cli",
+	} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; rank(got) >= rank("medium") {
+			t.Fatalf("false positive: %q classified %s", cmd, got)
+		}
+	}
+}
+
 func TestListingExemptionAllowsMetadataReads(t *testing.T) {
 	for _, cmd := range []string{
 		"ls ~/.argus", "ls ~/.claude", "ls ~/.ssh", "stat ~/.aws",
