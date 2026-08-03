@@ -54,7 +54,8 @@
           "type": "array",
           "items": { "$ref": "#/$defs/escalation" }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "match": {
       "type": "object",
@@ -81,7 +82,8 @@
         "raw": { "type": "string" },
         "mcpServer": { "type": "array", "items": { "type": "string" } },
         "mcpTool": { "type": "string" }
-      }
+      },
+      "additionalProperties": false
     },
     "condition": {
       "type": "object",
