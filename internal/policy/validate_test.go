@@ -41,6 +41,22 @@ func TestValidateRejectsUnknownField(t *testing.T) {
 	}
 }
 
+// A misspelled key at the document, defaults, or condition level must be
+// rejected — a silently-ignored `override`/`shdow`/`cwdMatchez` would leave the
+// operator's intended change (disable a rule, enable shadow, a prod escalation)
+// quietly inert while doctor reports a green PASS.
+func TestValidateRejectsUnknownTopLevelKeys(t *testing.T) {
+	for _, doc := range []string{
+		`{"version":1,"rules":[],"override":{"sudo":{"enabled":false}}}`, // overrides misspelled
+		`{"version":1,"rules":[],"defaults":{"shdow":true}}`,             // shadow misspelled
+		`{"version":1,"rules":[{"id":"t","tool":["Bash"],"reason":"x","contextEscalation":[{"when":{"cwdMatchez":"prod"},"to":"high"}]}]}`,
+	} {
+		if err := Validate([]byte(doc)); err == nil {
+			t.Fatalf("Validate must reject a misspelled key: %s", doc)
+		}
+	}
+}
+
 func TestValidateAcceptsDefault(t *testing.T) {
 	b, err := json.Marshal(Default())
 	if err != nil {
