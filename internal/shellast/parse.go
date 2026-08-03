@@ -194,11 +194,19 @@ func processStmt(stmt *syntax.Stmt, vars map[string]string, f *Facts) {
 // expansion), the loop's values are unknown: it flags obfuscation and walks the
 // body once with the variable UNBOUND, so a body reference stays fail-closed. A
 // C-style `for ((;;))` carries no value list — its body is walked once and its
-// header is scanned for a command substitution that would execute. The prior
-// binding of the variable's name is saved and restored so a same-named variable
-// outside the loop is unaffected. Total resolved body walks are capped
-// (maxLoopBodyWalks) so nested literal loops cannot blow the hot-path budget.
+// header is scanned for a command substitution that would execute. The body is
+// walked in a copy of the variable scope so neither the loop variable nor any
+// other assignment the body makes leaks into later resolution (a loop may run
+// zero times). Total resolved body walks are capped (maxLoopBodyWalks) so nested
+// literal loops cannot blow the hot-path budget.
 func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
+	// Walk the body in a CHILD scope (a copy of vars). A loop may run zero times,
+	// so any assignment its body makes is uncertain — letting it leak into the
+	// outer scope could rebind a later `$X` to a benign value and mask a real
+	// verb (`X=rm; for f in; do X=ls; done; $X -rf /`). The child inherits the
+	// outer bindings so the body still resolves outer vars and the loop var.
+	child := cloneVars(vars)
+
 	wi, ok := c.Loop.(*syntax.WordIter)
 	if !ok || wi.Name == nil {
 		// C-style `for ((init; cond; post))` (or an unnamed iterator): no value
@@ -209,7 +217,7 @@ func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
 			f.Obfuscated = true
 		}
 		for _, s := range c.Do {
-			processStmt(s, vars, f)
+			processStmt(s, child, f)
 		}
 		return
 	}
@@ -226,15 +234,6 @@ func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
 		values = append(values, v)
 	}
 
-	saved, had := vars[name]
-	defer func() {
-		if had {
-			vars[name] = saved
-		} else {
-			delete(vars, name)
-		}
-	}()
-
 	if allResolved && len(values) > 0 {
 		for _, v := range values {
 			if f.loopBudget <= 0 {
@@ -245,9 +244,9 @@ func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
 				return
 			}
 			f.loopBudget--
-			vars[name] = v
+			child[name] = v
 			for _, s := range c.Do {
-				processStmt(s, vars, f)
+				processStmt(s, child, f)
 			}
 		}
 		return
@@ -255,9 +254,9 @@ func processForLoop(c *syntax.ForClause, vars map[string]string, f *Facts) {
 	// Unresolved (or empty) list: the values are unknown, so walk the body once
 	// with the variable unbound — any reference to it stays unresolved and the
 	// loop is already flagged obfuscated above.
-	delete(vars, name)
+	delete(child, name)
 	for _, s := range c.Do {
-		processStmt(s, vars, f)
+		processStmt(s, child, f)
 	}
 }
 
@@ -502,6 +501,16 @@ func decodeANSIC(s string) string {
 
 func isHexDigit(c byte) bool {
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+// cloneVars returns a shallow copy of a variable scope, used to give a loop body
+// a child scope whose assignments cannot leak into later resolution.
+func cloneVars(vars map[string]string) map[string]string {
+	out := make(map[string]string, len(vars))
+	for k, v := range vars {
+		out[k] = v
+	}
+	return out
 }
 
 // sinkNames returns the command names a single (non-pipe) stage runs: the

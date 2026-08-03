@@ -217,6 +217,26 @@ func TestForLoopUnresolvedListStaysObfuscated(t *testing.T) {
 	}
 }
 
+// A loop body's assignments must not leak into later resolution: a loop can run
+// zero times, so `X=rm; for f in; do X=ls; done; $X -rf /` must still see the
+// pre-loop X=rm and surface `rm`, not the benign `ls` the never-run body sets.
+func TestForLoopBodyAssignmentDoesNotLeak(t *testing.T) {
+	for _, cmd := range []string{
+		`X=rm; for f in; do X=ls; done; $X -rf /`,     // explicit empty list
+		`X=rm; for f; do X=ls; done; $X -rf /`,        // empty "$@"
+		`X=rm; for f in a b; do X=ls; done; $X -rf /`, // non-empty: still uncertain
+	} {
+		f := Extract(cmd)
+		if !hasCmd(f, "rm") {
+			t.Fatalf("%q: pre-loop X=rm must surface; body X=ls must not leak, got %+v", cmd, f.Commands)
+		}
+	}
+	// The loop variable itself is scoped too: X restores to its pre-loop value.
+	if !argContains(Extract(`X=safe; for X in a b c; do :; done; rm -rf "$X"`), "rm", "safe") {
+		t.Fatal("post-loop $X must resolve to the pre-loop value `safe`")
+	}
+}
+
 // A C-style `for ((...))` carries no value list, so its header is not resolved
 // as words — but a command substitution in the header still executes. It must
 // flag obfuscation (fail closed), while a benign arithmetic header stays clean.
