@@ -312,11 +312,28 @@ func TestResolvedPathFloorsBeatQuoteAndVarSplit(t *testing.T) {
 			t.Fatalf("%q must floor high via resolved argv, got %s", cmd, got)
 		}
 	}
+	// A backslash-escaped protected segment (`.s\sh` = `.ssh`) must also floor.
+	for _, cmd := range []string{`cat ~/.s\sh/id_rsa`, `cat ~/.cla\ude/settings.json`} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; got != "high" {
+			t.Fatalf("%q (backslash-escaped) must floor high, got %s", cmd, got)
+		}
+	}
 	// The resolved view must NOT over-match a benign path that merely resolves.
 	for _, cmd := range []string{`ls ~/.ssh_backup`, `cat ~/.claude/projects/x/memory/f.md`} {
 		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; got == "high" {
 			t.Fatalf("false positive: %q resolved to high", cmd)
 		}
+	}
+	// The resolved-argv view must not make a structural rule cross a statement
+	// boundary: `bash; cat deploy.sh` is two benign statements, not opaque-exec.
+	for _, cmd := range []string{`bash; cat deploy.sh`, `sh; echo build.sh`} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; rank(got) >= rank("medium") {
+			t.Fatalf("opaque-exec false positive across `;`: %q -> %s", cmd, got)
+		}
+	}
+	// A genuine opaque exec still asks.
+	if got := Classify(bash("bash deploy.sh", "default", "/tmp"), pol).Severity; rank(got) < rank("medium") {
+		t.Fatalf("real `bash deploy.sh` must still ask, got %s", got)
 	}
 }
 

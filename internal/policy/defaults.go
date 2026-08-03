@@ -185,7 +185,7 @@ func Floor() []Rule {
 		{ID: "forkbomb", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
 			Match: Match{Raw: `:\(\)\s*\{`}, Reason: "forkbomb"},
 		{ID: "pipe-to-shell", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
-			Match: Match{PipesInto: []string{"sh", "bash", "zsh"}}, Reason: "pipe-to-shell"},
+			Match: Match{PipesInto: []string{"sh", "bash", "zsh", "dash", "ksh", "fish"}}, Reason: "pipe-to-shell"},
 		{ID: "db-destructive", Enabled: true, AlwaysHigh: true, Severity: "high", Tool: []string{"Bash"},
 			// Cmd (a real DB client is present) AND Raw (the destructive statement
 			// appears anywhere in the command). Gating on the client's presence, not

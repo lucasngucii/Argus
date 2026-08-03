@@ -114,6 +114,20 @@ func TestPipeSinkThroughWrapper(t *testing.T) {
 	if !Extract("echo x | base64 -d | timeout 5 sh").Obfuscated {
 		t.Fatal("decoder | wrapper shell must flag obfuscated")
 	}
+	// Unknown-but-common exec wrappers must also surface the shell.
+	for _, cmd := range []string{"curl x | command bash", "curl x | setsid bash", "curl x | stdbuf -o0 bash"} {
+		if !shellSink(Extract(cmd)) {
+			t.Fatalf("%q: exec wrapper must surface the shell sink, got %v", cmd, Extract(cmd).PipeSinks)
+		}
+	}
+	// sinkNames must pick the WRAPPED command precisely, not every token: a
+	// shell-NAMED argument to a non-shell command is not a sink (else a benign
+	// `xargs grep bash` would hit the pipe-to-shell floor).
+	for _, cmd := range []string{"find . | xargs grep bash", "ls | timeout 5 grep -r sh ."} {
+		if shellSink(Extract(cmd)) {
+			t.Fatalf("%q: a shell-named argument must not be a pipe sink, got %v", cmd, Extract(cmd).PipeSinks)
+		}
+	}
 }
 func TestParseFailurePopulatesRaw(t *testing.T) {
 	f := Extract("`unterminated")
@@ -420,6 +434,59 @@ func TestShellHereDocSmugglingObfuscates(t *testing.T) {
 	// A non-shell reading a heredoc is fine (cat is not an interpreter).
 	if Extract("cat <<EOF\nhello\nEOF\n").Obfuscated {
 		t.Fatal("cat <<EOF must not be obfuscated")
+	}
+	// A shell behind a wrapper reading a heredoc is still smuggling.
+	for _, cmd := range []string{`timeout 5 bash <<<"evil"`, `env bash <<<x`, `sudo bash <<<x`} {
+		if !Extract(cmd).Obfuscated {
+			t.Fatalf("%q: wrapped shell heredoc must be obfuscated", cmd)
+		}
+	}
+	if Extract("timeout 5 cat <<EOF\nx\nEOF\n").Obfuscated {
+		t.Fatal("timeout cat <<EOF (non-shell) must not be obfuscated")
+	}
+}
+
+// An unquoted backslash escapes the next character in the shell (`.s\sh` is
+// `.ssh`), so it must be stripped or a backslash-escaped protected path resolves
+// with the backslash intact and slips every path floor.
+func TestUnquotedBackslashStripped(t *testing.T) {
+	if got := stripUnquotedBackslashes(`.s\sh`); got != ".ssh" {
+		t.Fatalf("stripUnquotedBackslashes(.s\\sh) = %q, want .ssh", got)
+	}
+	if got := stripUnquotedBackslashes(`a\ b`); got != "a b" {
+		t.Fatalf("escaped space = %q, want 'a b'", got)
+	}
+	// The resolved argv surfaces the real segment.
+	if !argContains(Extract(`rm -rf /home/x/.s\sh`), "rm", "/home/x/.ssh") {
+		t.Fatal("escaped path must resolve to /home/x/.ssh")
+	}
+	// A double-quoted backslash stays literal (bash keeps it).
+	if !argContains(Extract(`cat "a\sb"`), "cat", `a\sb`) {
+		t.Fatal("double-quoted backslash must stay literal")
+	}
+}
+
+// A select-style parameter expansion resolves when the base variable is known
+// (so benign default-value idioms don't read as obfuscation), while a
+// transforming modifier or an unknown base var stays fail-closed.
+func TestParamExpSelectResolvesWhenKnown(t *testing.T) {
+	// Known base var: default picks the var, alternate picks the word.
+	if !hasCmd(Extract(`X=rm; ${X:-ls} -rf /`), "rm") {
+		t.Fatal("${X:-ls} with X=rm must resolve to rm")
+	}
+	if Extract(`D=/tmp; cat "${D:-fallback}/f"`).Obfuscated {
+		t.Fatal("a default expansion on a known var must not be obfuscated")
+	}
+	if !hasCmd(Extract(`X=rm; ${X:+ls} -rf /`), "ls") {
+		t.Fatal("${X:+ls} with X set must resolve to the word ls")
+	}
+	// Unknown base var stays fail-closed (could be env-provided).
+	if !Extract(`cat "${MYSTERY:-x}"`).Obfuscated {
+		t.Fatal("a select expansion on an unknown var must stay obfuscated")
+	}
+	// Transforming modifiers stay fail-closed (H1 evasion).
+	if !Extract(`X=safe_rm; ${X#safe_} -rf /`).Obfuscated {
+		t.Fatal("a strip modifier must stay obfuscated")
 	}
 }
 
