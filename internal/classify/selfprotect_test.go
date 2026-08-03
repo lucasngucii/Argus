@@ -335,13 +335,51 @@ func TestDbDestructiveAnchoredToClients(t *testing.T) {
 			t.Fatalf("false positive: %q floored high", cmd)
 		}
 	}
-	// Must still floor: a destructive statement to an actual client.
+	// Must still floor: a destructive statement to an actual client, including
+	// one fed via a pipe (the SQL is not the client's own arg).
 	for _, cmd := range []string{
 		`psql -c "drop table users"`,
 		`mysql -e "delete from sessions"`,
+		`echo "drop table users" | psql`,
+		`duckdb -c "delete from t"`,
 	} {
 		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; got != "high" {
 			t.Fatalf("%q must floor high, got %s", cmd, got)
+		}
+	}
+}
+
+// TestEtcShadowFlooredForEveryVerb pins the fix for the audit's critical /etc
+// gap: /etc/shadow (password hashes) and /etc/sudoers must floor high for a
+// CONTENT read and any write, not only a shell redirect.
+func TestEtcShadowFlooredForEveryVerb(t *testing.T) {
+	pol := policy.Default()
+	for _, cmd := range []string{
+		"cat /etc/shadow", "grep root /etc/shadow", "cp /etc/shadow /tmp/x",
+		"tee /etc/shadow", "chmod 777 /etc/shadow", "cp evil /etc/gshadow",
+	} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; got != "high" {
+			t.Fatalf("%q must floor high, got %s", cmd, got)
+		}
+	}
+	// A pure metadata listing stays exempt (names/sizes are not the secret).
+	if got := Classify(bash("stat /etc/shadow", "default", "/tmp"), pol).Severity; got == "high" {
+		t.Fatalf("stat /etc/shadow (metadata) should be exempt, got %s", got)
+	}
+}
+
+// TestRmSystemCriticalExtendedCoverage pins the widened coverage: /usr/lib64 and
+// bare top-level dirs, still without dev-path false positives.
+func TestRmSystemCriticalExtendedCoverage(t *testing.T) {
+	pol := policy.Default()
+	for _, cmd := range []string{"rm /usr/lib64/x.so", "rm /boot", "rm /bin", "unlink /lib64"} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; rank(got) < rank("medium") {
+			t.Fatalf("%q must ask, got %s", cmd, got)
+		}
+	}
+	for _, cmd := range []string{"rm /usr/local/lib64/x", "rm ./boot", "rm mybin"} {
+		if got := Classify(bash(cmd, "default", "/tmp"), pol).Severity; rank(got) >= rank("medium") {
+			t.Fatalf("false positive: %q -> %s", cmd, got)
 		}
 	}
 }
